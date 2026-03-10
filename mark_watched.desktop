@@ -1,0 +1,39 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=KonqPopupMenu/Plugin
+MimeType=video/*;inode/directory;
+Actions=markWatched;markUnwatched;syncProgress
+X-KDE-Submenu=SMPlayer Status
+
+[Desktop Action markWatched]
+Name=Mark as Watched
+Icon=task-complete
+Exec=python3 /mnt/D_TOSHIBA_S300/Projects/Dolphin_WatchMark/watchmark.py --manual-watched %f
+
+[Desktop Action markUnwatched]
+Name=Mark as Unwatched
+Icon=edit-clear
+Exec=python3 /mnt/D_TOSHIBA_S300/Projects/Dolphin_WatchMark/watchmark.py --manual-unwatched %f
+
+[Desktop Action syncProgress]
+Name=Sync Progress from INI
+Icon=view-refresh
+Exec=python3 /mnt/D_TOSHIBA_S300/Projects/Dolphin_WatchMark/watchmark.py --sync %f
+
+
+[Desktop Entry]
+Type=Service
+ServiceTypes=KonqPopupMenu/Plugin
+MimeType=video/*;inode/directory;
+Actions=syncProgress;syncRecursive
+X-KDE-Submenu=Video Progress
+
+[Desktop Action syncProgress]
+Name=Sync Progress (Single)
+Icon=view-refresh
+Exec=python3 ~/scripts/smplayer_thumb.py %f
+
+[Desktop Action syncRecursive]
+Name=Sync Progress (Recursive)
+Icon=folder-sync
+Exec=python3 ~/scripts/smplayer_thumb.py %f --recursive
