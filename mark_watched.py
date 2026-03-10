@@ -3,46 +3,40 @@
 
 # You will need to install the Python Imaging Library:
 # pip install Pillow
+# sudo zypper install ffmpeg
 
 
-from PIL import Image, ImageDraw, ImageFont
-import hashlib
 import os
-import urllib.parse
-import subprocess
-import sys
+import struct
+import hashlib
 import argparse
-
-def get_thumbnail_path(video_path):
-    # Standard Freedesktop pathing
-    uri = "file://" + urllib.parse.quote(os.path.abspath(video_path))
-    hash_name = hashlib.md5(uri.encode('utf-8')).hexdigest()
-    # Check 'large' or 'normal' folders
-    for folder in ['large', 'normal']:
-        t_path = os.path.expanduser(f"~/.cache/thumbnails/{folder}/{hash_name}.png")
-        if os.path.exists(t_path):
-            return t_path
-    return None
+import subprocess
+import traceback  # Added for detailed error reporting
+import urllib.parse
+# from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 
 
-def apply_overlay(video_path, percentage, watched=False):
-    t_path = get_thumbnail_path(video_path)
-    if not t_path: return
+# --- CONFIGURATION ---
+INI_BASE_PATH = os.path.expanduser("~/.config/smplayer/file_settings/")
+THUMB_BASE = os.path.expanduser("~/.cache/thumbnails/")
+MIN_THRESHOLD = 5.0   # % below which is "unwatched"
+MAX_THRESHOLD = 90.0  # % above which is "watched" (green check)
+VIDEO_EXTS = ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv')
 
-    with Image.open(t_path) as img:
-        draw = ImageDraw.Draw(img)
-        w, h = img.size
 
-        if watched:
-            # Draw green checkmark in bottom right
-            draw.rectangle([w-30, h-30, w-5, h-5], fill="green")
-            draw.line([w-25, h-18, w-20, h-10, w-10, h-25], fill="white", width=3)
-        else:
-            # Draw percentage text
-            text = f"{int(percentage)}%"
-            draw.text((w-40, h-20), text, fill="white", stroke_fill="black", stroke_width=1)
-
-        img.save(t_path)
+def get_duration(video_path):
+    """Uses ffprobe to get video duration since SMPlayer doesn't save it."""
+    try:
+        cmd = [
+            "ffprobe", "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", video_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return float(result.stdout.strip())
+    except Exception:
+        traceback.print_exc()
+        return None
 
 
 def mark_metadata_watched(video_path):
@@ -52,144 +46,192 @@ def mark_metadata_watched(video_path):
     # subprocess.run(["balooctl", "index", video_path], capture_output=True)
 
 
-# To get duration if not in INI:
-result = subprocess.run(
-    ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", video_file],
-    capture_output=True, text=True
-)
-duration = float(result.stdout)
-
-parser = argparse.ArgumentParser()
-parser.add_argument('path')
-parser.add_argument('--sync', action='store_true')
-args = parser.parse_args()
-
-def process_path(target):
-    if os.path.isdir(target):
-        for root, dirs, files in os.walk(target):
-            for f in files:
-                if f.lower().endswith(('.mp4', '.mkv', '.avi')):
-                    update_video_status(os.path.join(root, f))
-    else:
-        update_video_status(target)
-
-def update_video_status(video_file):
-    # 1. Get rotation (your current code)
-    # 2. Get current_sec from INI
-    # 3. Calculate percentage (requires duration, see below)
-    # 4. Run apply_overlay()
-    pass
-
-
-
-
-# --- CONFIGURATION ---
-INI_BASE_PATH = os.path.expanduser("~/.config/smplayer/file_settings/")
-THUMB_BASE = os.path.expanduser("~/.cache/thumbnails/")
-MIN_THRESHOLD = 5.0   # % below which is "unwatched"
-MAX_THRESHOLD = 90.0  # % above which is "watched" (green check)
-
 def get_smplayer_hash(filename):
-    """Calculates the 64-bit MD5-like hash used by SMPlayer."""
+    """Calculates the 64-bit MD5-like hash used by SMPlayer/OpenSubtitles."""
     try:
         size = os.path.getsize(filename)
         longlongformat = '<q'
         bytesize = struct.calcsize(longlongformat)
+
         with open(filename, "rb") as f:
             hash_val = size
+            # Hash first 64KB
             for _ in range(65536 // bytesize):
                 buffer = f.read(bytesize)
-                if not buffer: break
                 (l_value,) = struct.unpack(longlongformat, buffer)
                 hash_val = (hash_val + l_value) & 0xFFFFFFFFFFFFFFFF
+
+            # Hash last 64KB
             f.seek(max(0, size - 65536), 0)
             for _ in range(65536 // bytesize):
                 buffer = f.read(bytesize)
-                if not buffer: break
                 (l_value,) = struct.unpack(longlongformat, buffer)
                 hash_val = (hash_val + l_value) & 0xFFFFFFFFFFFFFFFF
+
         return "%016x" % hash_val
-    except: return None
+    except Exception:
+        traceback.print_exc()
+        return None
 
-def get_kde_thumbnail_path(video_path):
-    """Finds the existing KDE thumbnail for a given file path."""
-    abs_path = os.path.abspath(video_path)
-    uri = "file://" + urllib.parse.quote(abs_path)
-    # KDE/Freedesktop thumbnails are MD5(URI).png
-    thumb_name = hashlib.md5(uri.encode('utf-8')).hexdigest() + ".png"
-
-    for size in ['large', 'normal']:
-        full_path = os.path.join(THUMB_BASE, size, thumb_name)
-        if os.path.exists(full_path):
-            return full_path
-    return None
 
 def get_progress_from_ini(filename):
     """Extracts current_sec and duration to calculate percentage."""
-    h = get_smplayer_hash(filename)
-    if not h: return None
+    try:
+        h = get_smplayer_hash(filename)
+        if not h: return None
+        
+        ini_path = os.path.join(INI_BASE_PATH, h[0], f"{h}.ini")
+        print("SMPlayer INI path: " + ini_path)
+        if not os.path.exists(ini_path):
+            return None
 
-    ini_path = os.path.join(INI_BASE_PATH, h[0], f"{h}.ini")
-    if not os.path.exists(ini_path):
+        data = {}
+        with open(ini_path, "r", errors='replace') as f:
+            for line in f:
+                if line.startswith("current_sec="):
+                    val = line.strip().split("=")[1]
+                    print("current_sec=" + val)
+                    return val
+                # if "=" in line:
+                #     key, val = line.strip().split("=", 1)
+                #     data[key] = val
+        # curr = float(data.get("current_sec", 0))
+                    
+        return 0
+    except Exception:
+        traceback.print_exc()
         return None
 
-    data = {}
-    with open(ini_path, "r") as f:
-        for line in f:
-            if "=" in line:
-                key, val = line.strip().split("=", 1)
-                data[key] = val
 
-    curr = float(data.get("current_sec", 0))
-    total = float(data.get("duration", 0))
-
-    if total > 0:
-        return (curr / total) * 100
-    return 0
-
-def draw_overlay(thumb_path, percentage):
-    """Modifies the thumbnail with a checkmark or progress text."""
+def get_kde_thumbnail_path(video_path):
+    """Finds the existing KDE thumbnail by matching KDE's URI encoding style."""
     try:
-        with Image.open(thumb_path) as img:
+        abs_path = os.path.abspath(video_path)
+        
+        # We manually build the URI to control percent-encoding.
+        # Freedesktop/KDE typically does NOT encode: / _ - . ~ [ ]
+        # It DOES encode: # % and non-ascii (like the lightning bolt)
+        
+        path_encoded = urllib.parse.quote(abs_path, safe="!;:()&$/_-.,~*+=@")
+        uri = f"file://{path_encoded}"
+        
+        # MD5 hash of the URI
+        thumb_name = hashlib.md5(uri.encode('utf-8')).hexdigest() + ".png"
+
+        print(f"DEBUG: Processing {os.path.basename(video_path)}")
+        print(f"DEBUG: URI: {uri}")
+        print(f"DEBUG: Calculated Hash: {thumb_name}")
+
+        # Check all standard thumbnail locations
+        for size in ['large', 'normal', 'x-large', 'xx-large']:
+            full_path = os.path.join(THUMB_BASE, size, thumb_name)
+            if os.path.exists(full_path):
+                print(f"DEBUG: Found thumbnail at: {full_path}")
+                return full_path
+        
+        print("DEBUG: No thumbnail found in cache.")
+        return None
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+def update_thumbnail(thumb_path, percentage, mode):
+    """Handles backup, restoration, and drawing."""
+    try:
+        bak_path = thumb_path + ".bak"
+
+        # Manage the Backup
+        if not os.path.exists(bak_path):
+            # Create backup from original if it doesn't exist
+            os.replace(thumb_path, bak_path)
+        
+        if mode == "unwatched":
+            # Restore original and remove backup
+            os.replace(bak_path, thumb_path)
+            return
+
+        # Draw on top of the CLEAN backup
+        with Image.open(bak_path) as img:
+            # This captures the Thumb::MTime, Thumb::URI, etc.
+            metadata = img.info
+
             img = img.convert("RGBA")
             draw = ImageDraw.Draw(img)
             w, h = img.size
-
-            if percentage >= MAX_THRESHOLD:
-                # Green Checkmark Box
-                box_size = int(w * 0.2)
-                draw.rectangle([w-box_size, h-box_size, w, h], fill=(0, 150, 0, 200))
-                draw.line([w-(box_size*0.8), h-(box_size*0.5), w-(box_size*0.5), h-(box_size*0.2), w-(box_size*0.2), h-(box_size*0.8)], fill="white", width=2)
-            elif percentage > MIN_THRESHOLD:
-                # Progress Text
+            
+            if mode == "watched":
+                # Green Checkmark
+                box_s = int(w * 0.25)
+                draw.rectangle([w-box_s, h-box_s, w, h], fill=(0, 150, 0, 200))
+                draw.line([w-box_s*0.8, h-box_s*0.5, w-box_s*0.5, h-box_s*0.2, w-box_s*0.2, h-box_s*0.8], fill="white", width=3)
+            elif mode == "sync":
+                # Percentage Text
                 text = f"{int(percentage)}%"
-                draw.rectangle([w-int(w*0.3), h-20, w, h], fill=(0, 0, 0, 150))
-                draw.text((w-int(w*0.25), h-18), text, fill="white")
+                draw.rectangle([0, h-int(h*0.2), w, h], fill=(0, 0, 0, 160))
+                draw.text((int(w/2)-10, h-int(h*0.18)), text, fill="white")
+                # draw.text((w-40, h-20), text, fill="white", stroke_fill="black", stroke_width=1)
+            
+            # Save with Original Metadata
+            # This is the critical step to stop Dolphin from deleting it
+            pnginfo = PngImagePlugin.PngInfo()
+            for k, v in metadata.items():
+                if isinstance(v, str): # Only copy string-based metadata
+                    pnginfo.add_text(k, v)
+            
+            img.save(thumb_path, "PNG", pnginfo=pnginfo)
+    except Exception:
+        traceback.print_exc()
 
-            img.save(thumb_path)
-    except Exception as e:
-        print(f"Error drawing on {thumb_path}: {e}")
 
-def process_file(filepath):
-    perc = get_progress_from_ini(filepath)
-    if perc is not None:
-        t_path = get_kde_thumbnail_path(filepath)
-        if t_path:
-            draw_overlay(t_path, perc)
-            print(f"Updated: {os.path.basename(filepath)} ({int(perc)}%)")
+def process_item(item_path, mode):
+    t_path = get_kde_thumbnail_path(item_path)
+    print(f"Thumbnail path: {t_path}")
+    if not t_path and not os.path.exists(str(t_path)):
+        print("Thumbnail not found")
+        return
 
-if __name__ == "__main__":
+    percentage = 0
+    if mode == "watched":
+        percentage = 100
+    elif mode == "sync":
+        current_sec = get_progress_from_ini(item_path)
+        current_sec = float(current_sec.strip())
+        duration = get_duration(item_path)
+        percentage = (current_sec / duration * 100) if duration > 0 else 0
+        print(f"Video duration from INI: {current_sec}")
+        print(f"Video duration: {duration}")
+        print(f"Watch time: {percentage}%")
+        if percentage < MIN_THRESHOLD:
+            mode = "unwatched"
+        elif percentage > MAX_THRESHOLD:
+            mode = "watched"
+        print("Updated mode: " + mode)
+
+    update_thumbnail(t_path, percentage, mode)
+
+
+def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('path', help="File or directory to process")
-    parser.add_argument('--recursive', action='store_true')
+    parser.add_argument('paths', nargs='+', help="File or folder paths")
+    parser.add_argument('--mark-watched', action='store_true')
+    parser.add_argument('--mark-unwatched', action='store_true')
+    parser.add_argument('--sync', action='store_true')
     args = parser.parse_args()
 
-    if os.path.isdir(args.path):
-        for root, dirs, files in os.walk(args.path):
-            for f in files:
-                if f.lower().endswith(('.mp4', '.mkv', '.avi', '.mov')):
-                    process_file(os.path.join(root, f))
-            if not args.recursive: break
-    else:
-        process_file(args.path)
+    mode = "sync"
+    if args.mark_watched: mode = "watched"
+    if args.mark_unwatched: mode = "unwatched"
+
+    for path in args.paths:
+        if os.path.isdir(path):
+            for root, _, files in os.walk(path):
+                for f in files:
+                    if f.lower().endswith(VIDEO_EXTS):
+                        process_item(os.path.join(root, f), mode)
+        else:
+            process_item(path, mode)
+
+if __name__ == "__main__":
+    main()
 
