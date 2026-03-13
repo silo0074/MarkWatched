@@ -16,9 +16,11 @@ import hashlib
 import argparse
 import subprocess
 import time
+import concurrent.futures
 import shutil
 import traceback  # Added for detailed error reporting
 import urllib.parse
+import threading
 # from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 
@@ -33,6 +35,8 @@ VIDEO_EXTS = ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv')
 APP_NAME = 'MarkWatched'
 APP_VERSION = '1.0.0'
 
+# Create a global lock
+progress_lock = threading.Lock()
 
 def get_qdbus_cmd():
     """Detects the available qdbus command on the system."""
@@ -89,13 +93,17 @@ def get_smplayer_hash(filename):
 
 def get_smplayer_ini_data(filename):
     """Extracts specified data from the SMPlayer INI file."""
+
+    # Get a unique identifier for the current thread
+    thread_id = threading.get_native_id()
+
     try:
         h = get_smplayer_hash(filename)
         if not h:
             return {}  # Return empty dict if hash fails
 
         ini_path = os.path.join(INI_BASE_PATH, h[0], f"{h}.ini")
-        print("SMPlayer INI path: " + ini_path)
+        print(f"[Thread-{thread_id}] SMPlayer INI path: " + ini_path)
 
         if not os.path.exists(ini_path):
             return {} # Return empty dict if file doesn't exist
@@ -115,7 +123,7 @@ def get_smplayer_ini_data(filename):
                     if key in desired_keys:
                         data[key] = val
 
-        print(f"INI data: {data}")
+        print(f"[Thread-{thread_id}] INI data: {data}")
         return data
     except Exception:
         traceback.print_exc()
@@ -124,6 +132,9 @@ def get_smplayer_ini_data(filename):
 
 def write_smplayer_ini_data(filename, data_to_write):
     """Writes multiple key-value pairs to the SMPlayer INI file, replacing if they exist."""
+    # Get a unique identifier for the current thread
+    thread_id = threading.get_native_id()
+
     if not data_to_write:
         return
     try:
@@ -146,7 +157,7 @@ def write_smplayer_ini_data(filename, data_to_write):
         with open(ini_path, "w", errors='replace') as f:
             f.writelines(new_lines)
 
-        print(f"Wrote {data_to_write} to {ini_path}")
+        print(f"[Thread-{thread_id}] Wrote {data_to_write} to {ini_path}")
     except Exception:
         traceback.print_exc()
 
@@ -154,6 +165,10 @@ def write_smplayer_ini_data(filename, data_to_write):
 def get_kde_thumbnail_path(video_path):
     """Finds the existing KDE thumbnail by matching KDE's URI encoding style."""
     """Returns a list of all existing thumbnail size variants for the file."""
+
+    # Get a unique identifier for the current thread
+    thread_id = threading.get_native_id()
+
     try:
         abs_path = os.path.abspath(video_path)
         
@@ -167,16 +182,16 @@ def get_kde_thumbnail_path(video_path):
         # MD5 hash of the URI
         thumb_name = hashlib.md5(uri.encode('utf-8')).hexdigest() + ".png"
 
-        # print(f"DEBUG: Processing {os.path.basename(video_path)}")
-        # print(f"DEBUG: URI: {uri}")
-        # print(f"DEBUG: Calculated Hash: {thumb_name}")
+        # print(f"[Thread-{thread_id}] DEBUG: Processing {os.path.basename(video_path)}")
+        # print(f"[Thread-{thread_id}] DEBUG: URI: {uri}")
+        # print(f"[Thread-{thread_id}] DEBUG: Calculated Hash: {thumb_name}")
 
         # Check all standard thumbnail locations
         found_paths = []
         for size in ['large', 'normal', 'x-large', 'xx-large']:
             full_path = os.path.join(THUMB_BASE, size, thumb_name)
             if os.path.exists(full_path):
-                print(f"DEBUG: Found thumbnail at: {full_path}")
+                print(f"[Thread-{thread_id}] DEBUG: Found thumbnail at: {full_path}")
                 found_paths.append(full_path)
         
         return found_paths
@@ -228,6 +243,10 @@ def apply_visual_overlay(img, percentage, mode, folder, is_small):
     Creates a high-resolution overlay layer, draws UI elements, 
     and downscales back to the image size for antialiasing.
     """
+
+    # Get a unique identifier for the current thread
+    thread_id = threading.get_native_id()
+
     w, h = img.size
     oversample = 4  # Draw at 4x size for high-quality edges
     canvas_w, canvas_h = w * oversample, h * oversample
@@ -238,12 +257,12 @@ def apply_visual_overlay(img, percentage, mode, folder, is_small):
 
     if mode == "watched":
         if is_small:
-            print("DEBUG: checkmark for small thumbnails")
+            print(f"[Thread-{thread_id}] DEBUG: checkmark for small thumbnails")
             # For list/details view
             center = (canvas_w // 2, canvas_h // 2)
             circle_r = int(canvas_h * 0.45)
         else:
-            print("DEBUG: checkmark for bigger thumbnails")
+            print(f"[Thread-{thread_id}] DEBUG: checkmark for bigger thumbnails")
             # For icon view
             circle_r = int(min(canvas_w, canvas_h) * 0.16)
             # Higher margin for folders to avoid overlapping the 'tab' of the folder icon
@@ -278,10 +297,13 @@ def apply_visual_overlay(img, percentage, mode, folder, is_small):
 
 def update_thumbnail(thumb_path, percentage, mode, folder=False):
     """Handles backup, restoration, and drawing."""
+    # Get a unique identifier for the current thread
+    thread_id = threading.get_native_id()
+
     try:
         # Determine paths
         bak_path = thumb_path if folder else thumb_path + ".bak"
-        print(f"Updating thumbnail: {thumb_path}")
+        print(f"[Thread-{thread_id}] Updating thumbnail: {thumb_path}")
 
         # Manage the Backup (for non-folder items)
         if not folder and not os.path.exists(bak_path):
@@ -294,12 +316,12 @@ def update_thumbnail(thumb_path, percentage, mode, folder=False):
                     os.replace(bak_path, thumb_path)
             else:
                 item_path = thumb_path 
-                print(f"Removing watch mode from folder: {item_path}")
+                print(f"[Thread-{thread_id}] Removing watch mode from folder: {item_path}")
                 for f_name in [".directory", ".folder_watched.png"]:
                     f_path = os.path.join(item_path, f_name)
                     if os.path.exists(f_path):
                         os.remove(f_path)
-                        print(f"Deleted: {f_path}")
+                        print(f"[Thread-{thread_id}] Deleted: {f_path}")
             return
                 
         # Drawing Logic
@@ -324,123 +346,18 @@ def update_thumbnail(thumb_path, percentage, mode, folder=False):
         traceback.print_exc()
 
 
-# def update_thumbnail(thumb_path, percentage, mode, folder=False):
-#     """Handles backup, restoration, and drawing."""
-#     """Adaptive drawing for large vs small (Details/Compact) thumbnails."""
-#     try:
-#         if folder:
-#             bak_path = thumb_path
-#         else:
-#             bak_path = thumb_path + ".bak"
-
-#         print(f"Updating thumbnail: {thumb_path}")
-
-#         # Manage the Backup
-#         if folder == False and not os.path.exists(bak_path):
-#             # Create backup from original if it doesn't exist
-#             os.replace(thumb_path, bak_path)
-        
-#         if mode == "unwatched":
-#             if folder == False:
-#                 # Restore original thumbnail and remove backup
-#                 if os.path.exists(bak_path):
-#                     os.replace(bak_path, thumb_path)
-#             else:
-#                 item_path = thumb_path # is folder
-#                 print(f"Removing watch mode from folder: {item_path}")
-#                 dot_dir = os.path.join(item_path, ".directory")
-#                 folder_png = os.path.join(item_path, ".folder_watched.png")
-                
-#                 for file_to_remove in [dot_dir, folder_png]:
-#                     print(f"Removing file: {file_to_remove}")
-#                     if os.path.exists(file_to_remove):
-#                         try:
-#                             os.remove(file_to_remove)
-#                             print(f"Deleted: {file_to_remove}")
-#                         except Exception as e:
-#                             print(f"Error deleting {file_to_remove}: {e}")
-#             return
-                
-#         with Image.open(bak_path) as img:
-#             # This captures the Thumb::MTime, Thumb::URI, etc.
-#             metadata = img.info
-
-#             img = img.convert("RGBA")
-#             # Alpha Compositing: The script now uses a separate overlay layer 
-#             # to ensure transparency and anti-aliasing look smooth.
-#             overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-#             draw = ImageDraw.Draw(overlay)
-#             w, h = img.size
-            
-#             # Identify if we are dealing with small thumbnails (Compact/Details view)
-#             is_small = h <= 128
-
-#             if mode == "watched":
-#                 if is_small:
-#                     print("DEBUG: checkmark for small thumbnails")
-#                     # Centered checkmark taking entire height
-#                     center = (w // 2, h // 2)
-#                     size = h // 2
-#                     draw.ellipse([center[0]-size, center[1]-size, center[0]+size, center[1]+size], fill=(0, 0, 0, 150))
-                    
-#                     # Previous simple checkmark commented out:
-#                     draw.line([(center[0]-size*0.5, center[1]), 
-#                                (center[0]-size*0.1, center[1]+size*0.4), 
-#                                (center[0]+size*0.5, center[1]-size*0.4)], 
-#                               fill=(50, 255, 50, 255), width=max(2, h // 10))
-#                 else:
-#                     print("DEBUG: checkmark for bigger thumbnails")
-#                     # Corner checkmark for large views
-#                     circle_r = int(min(w, h) * 0.15)
-#                     if folder == False:
-#                         margin_bottom = int(h * 0.05)
-#                     else:
-#                         margin_bottom = int(h * 0.15)
-#                     margin_right = int(w * 0.10)
-#                     center = (w - circle_r - margin_right, h - circle_r - margin_bottom)
-#                     draw.ellipse(
-#                         [center[0]-circle_r, center[1]-circle_r, center[0]+circle_r, center[1]+circle_r], 
-#                         fill=(0, 0, 0, 180)
-#                     )
-#                     draw.line(
-#                         [(center[0]-circle_r*0.5, center[1]), 
-#                         (center[0]-circle_r*0.1, center[1]+circle_r*0.4), 
-#                         (center[0]+circle_r*0.5, center[1]-circle_r*0.4)], 
-#                         fill=(50, 255, 50, 255), width=max(2, int(circle_r*0.2))
-#                     )
-
-#             elif mode == "sync":
-#                 # Progress Bar Height Logic
-#                 bar_height = h // 3 if is_small else max(4, int(h * 0.08))
-                
-#                 # Background
-#                 draw.rectangle([0, h - bar_height, w, h], fill=(0, 0, 0, 160))
-#                 # Progress
-#                 bar_width = int(w * (percentage / 100))
-#                 draw.rectangle([0, h - bar_height, bar_width, h], fill=(0, 255, 0, 255))
-            
-#             # Save with Original Metadata
-#             # This is the critical step to stop Dolphin from deleting it
-#             combined = Image.alpha_composite(img, overlay)
-#             pnginfo = PngImagePlugin.PngInfo()
-#             for k, v in metadata.items():
-#                 if isinstance(v, (str, bytes)):
-#                     pnginfo.add_text(k, str(v))
-            
-#             combined.convert("RGB").save(thumb_path, "PNG", pnginfo=pnginfo)
-            
-#     except Exception:
-#         traceback.print_exc()
-
-
 def process_item(item_path, mode):
+    # Get a unique identifier for the current thread
+    thread_id = threading.get_native_id()
+
+    print("----------------------------------------")
+    print(f"[Thread-{thread_id}] Starting: {item_path}")
     t_paths = get_kde_thumbnail_path(item_path)
 
-    print(f"Item path: {item_path}")
-    print(f"Thumbnail path: {t_paths}")
+    print(f"[Thread-{thread_id}] Thumbnail path: {t_paths}")
 
     if not t_paths:
-        print("Thumbnail not found")
+        print(f"[Thread-{thread_id}] Thumbnail not found")
         return
 
     ini_data_to_write = {}
@@ -469,7 +386,7 @@ def process_item(item_path, mode):
             should_update_thumbnail = True
             thumbnail_backup_exists = False
 
-    print(f"Received mode: {mode}")
+    print(f"[Thread-{thread_id}] Received mode: {mode}")
 
     if mode == "watched":
         # Set the manual override to 1 to prevent sync from changing it, 
@@ -494,7 +411,7 @@ def process_item(item_path, mode):
         current_sec = 0
 
         if ini_current_sec_str is None:
-            print("No progress time found in INI")
+            print(f"[Thread-{thread_id}] No progress time found in INI")
             # If there's no progress data, we can't sync.
             should_update_thumbnail = False
         else:
@@ -515,37 +432,37 @@ def process_item(item_path, mode):
             if ini_override_int != 0 or round(ini_progress_float) == watch_progress_perc:
                 if thumbnail_backup_exists:
                     should_update_thumbnail = False
-                    print("Found thumbnail .bak")
+                    print(f"[Thread-{thread_id}] Found thumbnail .bak")
                 else:
                     # Update thumbnail if .bak file doesn't exist, to sync with
                     # ini file for watched mode
                     if ini_override_int == 1:
                         mode = "watched"
-                        print("Sync watched mode")
+                        print(f"[Thread-{thread_id}] Sync watched mode")
             else:
                 # A sync is required. Queue progress and update mode for thumbnail.
                 ini_data_to_write["watchmark_progress"] = watch_progress_perc
-                print(f"Video position from INI: {current_sec}s")
-                print(f"Video duration: {duration}s")
-                print(f"Watch time: {watch_progress_perc}%")
+                print(f"[Thread-{thread_id}] Video position from INI: {current_sec}s")
+                print(f"[Thread-{thread_id}] Video duration: {duration}s")
+                print(f"[Thread-{thread_id}] Watch time: {watch_progress_perc}%")
 
                 if watch_progress_perc < MIN_THRESHOLD:
                     mode = "unwatched"
                 elif watch_progress_perc > MAX_THRESHOLD:
                     mode = "watched"
 
-            print("Updated mode from sync to " + mode)
+            print(f"[Thread-{thread_id}] Updated mode from sync to {mode}")
 
     if ini_data_to_write:
         write_smplayer_ini_data(item_path, ini_data_to_write)
     else:
-        print("Skipping INI update")
+        print(f"[Thread-{thread_id}] Skipping INI update")
 
     if should_update_thumbnail:
         for path in t_paths:
             update_thumbnail(path, watch_progress_perc, mode)
     else:
-        print("Skipping thumbnail update")
+        print(f"[Thread-{thread_id}] Skipping thumbnail update")
 
 
 def create_progress_bar(total):
@@ -567,23 +484,25 @@ def create_progress_bar(total):
 def update_progress_bar(dbus_ref, current_val):
     if not dbus_ref: return
 
-    # Split "org.kde.kdialog-xxxx /ProgressDialog" into two parts
-    parts = dbus_ref.split(' ')
-    service = parts[0]
-    path = parts[1] if len(parts) > 1 else "/ProgressDialog"
-    
-    # Use the specific 'Set' method for the value
-    # subprocess.run([QDBUS, service, path, "setValue", str(current_val)], capture_output=True)
-    # subprocess.run([QDBUS, service, path, "Set", "", "value", str(current_val)], capture_output=True)
+    # Use the lock to ensure only one thread speaks to DBus at a time
+    with progress_lock:
+        # Split "org.kde.kdialog-xxxx /ProgressDialog" into two parts
+        parts = dbus_ref.split(' ')
+        service = parts[0]
+        path = parts[1] if len(parts) > 1 else "/ProgressDialog"
+        
+        # Use the specific 'Set' method for the value
+        # subprocess.run([QDBUS, service, path, "setValue", str(current_val)], capture_output=True)
+        # subprocess.run([QDBUS, service, path, "Set", "", "value", str(current_val)], capture_output=True)
 
-    # We replace the empty "" with the explicit interface name
-    subprocess.run([
-        QDBUS, service, path, 
-        "org.freedesktop.DBus.Properties.Set",           # The method
-        "",                                              # The Interface
-        "value",                                         # The Property
-        str(current_val)                                 # The Value
-    ], capture_output=True)
+        # We replace the empty "" with the explicit interface name
+        subprocess.run([
+            QDBUS, service, path, 
+            "org.freedesktop.DBus.Properties.Set",           # The method
+            "",                                              # The Interface
+            "value",                                         # The Property
+            str(current_val)                                 # The Value
+        ], capture_output=True)
 
 
 def close_progress_bar(dbus_ref):
@@ -775,68 +694,137 @@ def main():
     args = parser.parse_args()
 
     mode = "sync"
-    processed_count = 0
-    folder_mode = False
     all_files = []
 
+    print(f"Starting {APP_NAME} version {APP_VERSION}")
+
     if args.mark_watched: mode = "watched"
-    if args.mark_unwatched: 
+    if args.mark_unwatched:
         # Confirmation Dialog for Unwatched
         try:
             confirm = subprocess.run(
-                ["kdialog", "--title", APP_NAME, "--warningyesno", 
+                ["kdialog", "--title", APP_NAME, "--warningyesno",
                  "Are you sure you want to mark these items as unwatched?\nThis will reset your watch progress."],
                 capture_output=True
             )
             if confirm.returncode != 0:
                 print("Operation cancelled by user.")
                 return
+        except FileNotFoundError:
+            print("kdialog not found, proceeding without confirmation.")
         except Exception:
-            pass # Fallback if kdialog fails
+            pass  # Fallback if kdialog fails for other reasons
         mode = "unwatched"
 
-    # Check if a single folder is selected for marking
+    # Handle the single folder case separately as it doesn't need parallel processing
     if len(args.paths) == 1 and os.path.isdir(args.paths[0]):
-        folder_mode = True
-        all_files.append(args.paths[0])
+        mark_folder_watched(args.paths[0], "/usr/share/icons/breeze/places/64/folder.svg", mode)
+        force_dolphin_reload()
+        return  # Exit after handling the single folder
 
-    else:
-        # Pre-calculate count for accurate progress bar
-        for path in args.paths:
-            if os.path.isdir(path):
-                for root, _, files in os.walk(path):
-                    for f in files:
-                        if f.lower().endswith(VIDEO_EXTS):
-                            all_files.append(os.path.join(root, f))
-            else:
+    # Pre-calculate list of all video files for accurate progress bar
+    for path in args.paths:
+        if os.path.isdir(path):
+            for root, _, files in os.walk(path):
+                for f in files:
+                    if f.lower().endswith(VIDEO_EXTS):
+                        all_files.append(os.path.join(root, f))
+        else:
+            if path.lower().endswith(VIDEO_EXTS):
                 all_files.append(path)
 
-        if not all_files:
-            return
+    if not all_files:
+        print("No video files found to process.")
+        return
 
     dbus_ref = create_progress_bar(len(all_files))
 
-    print(f"Starting {APP_NAME} version {APP_VERSION}")
     print(f"DEBUG: Number of total files: {len(all_files)}")
     print(f"DEBUG: dbus_ref: {dbus_ref}")
 
     # Give the DBus service a brief moment to become ready
     # Instead of time.sleep(0.1), use the poll function:
-    if wait_for_dbus_object(dbus_ref):
-        print("DEBUG: DBus service is ready.")
-    else:
+    if not wait_for_dbus_object(dbus_ref):
         print("DEBUG: Continuing anyway, DBus might be slow.")
+
+    # Benchmarking: Start the timer
+    start_time = time.perf_counter()
     
-    for i, file_path in enumerate(all_files):
-        print("----------------------------------")
-        print(f"DEBUG: File: {i+1}/{len(all_files)}")
+    # Choose your executor here for the test:
+    # Option A: concurrent.futures.ThreadPoolExecutor()
+    # Option B: concurrent.futures.ProcessPoolExecutor()
 
-        if folder_mode == False:
-            process_item(file_path, mode)
-            update_progress_bar(dbus_ref, i + 1)
+    # --- Parallel Processing using ThreadPoolExecutor ---
+    processed_count = 0
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        future_to_path = {executor.submit(process_item, path, mode): path for path in all_files}
+        print(f"Processing {len(all_files)} files across multiple threads...")
 
-        else:
-            mark_folder_watched(file_path, "/usr/share/icons/breeze/places/64/folder.svg", mode)
+        for future in concurrent.futures.as_completed(future_to_path):
+            path = future_to_path[future]
+            
+            # Get the ID of the thread that just finished this specific future
+            # Note: in a pool, threads are reused, so IDs will repeat
+            # Identify the worker
+            # threading.get_native_id() for Threads
+            # os.getpid() for Processes
+            worker_id = threading.get_native_id()
+            
+            try:
+                future.result()  # result() will re-raise any exception from the thread
+                print(f"[Thread-{worker_id}] Success: {os.path.basename(path)}")
+            except Exception as exc:
+                print(f"[Thread-{worker_id}] ERROR on {os.path.basename(path)}: {exc}")
+                traceback.print_exc()
+            finally:
+                # Update progress bar regardless of success or failure
+                processed_count += 1
+                update_progress_bar(dbus_ref, processed_count)
+
+    # Stop the timer
+    end_time = time.perf_counter()
+    total_duration = end_time - start_time
+
+# Mar 13 08:48:56 linux python3[97247]: ========================================
+# Mar 13 08:48:56 linux python3[97247]: BENCHMARK RESULT
+# Mar 13 08:48:56 linux python3[97247]: Mode: ThreadPoolExecutor
+# Mar 13 08:48:56 linux python3[97247]: Total Files: 19
+# Mar 13 08:48:56 linux python3[97247]: Total Time:  0.59 seconds
+# Mar 13 08:48:56 linux python3[97247]: Avg Speed:   0.0313 seconds/file
+# Mar 13 08:48:56 linux python3[97247]: ========================================
+
+# Mar 13 08:57:57 linux python3[99550]: ========================================
+# Mar 13 08:57:57 linux python3[99550]: BENCHMARK RESULT
+# Mar 13 08:57:57 linux python3[99550]: Mode: ThreadPoolExecutor
+# Mar 13 08:57:57 linux python3[99550]: Total Files: 54
+# Mar 13 08:57:57 linux python3[99550]: Total Time:  1.01 seconds
+# Mar 13 08:57:57 linux python3[99550]: Avg Speed:   0.0186 seconds/file
+# Mar 13 08:57:57 linux python3[99550]: ========================================
+
+
+# Mar 13 08:52:11 linux python3[98062]: ========================================
+# Mar 13 08:52:11 linux python3[98062]: BENCHMARK RESULT
+# Mar 13 08:52:11 linux python3[98062]: Mode: ProcessPoolExecutor
+# Mar 13 08:52:11 linux python3[98062]: Total Files: 19
+# Mar 13 08:52:11 linux python3[98062]: Total Time:  0.42 seconds
+# Mar 13 08:52:11 linux python3[98062]: Avg Speed:   0.0221 seconds/file
+# Mar 13 08:52:11 linux python3[98062]: ========================================
+
+# Mar 13 08:55:38 linux python3[98793]: ========================================
+# Mar 13 08:55:38 linux python3[98793]: BENCHMARK RESULT
+# Mar 13 08:55:38 linux python3[98793]: Mode: ProcessPoolExecutor
+# Mar 13 08:55:38 linux python3[98793]: Total Files: 54
+# Mar 13 08:55:38 linux python3[98793]: Total Time:  1.98 seconds
+# Mar 13 08:55:38 linux python3[98793]: Avg Speed:   0.0368 seconds/file
+# Mar 13 08:55:38 linux python3[98793]: ========================================
+    
+    print("\n" + "="*40)
+    print(f"BENCHMARK RESULT")
+    print(f"Mode: ThreadPoolExecutor")
+    print(f"Total Files: {len(all_files)}")
+    print(f"Total Time:  {total_duration:.2f} seconds")
+    print(f"Avg Speed:   {total_duration/len(all_files):.4f} seconds/file")
+    print("="*40)
 
     close_progress_bar(dbus_ref)
     force_dolphin_reload()
