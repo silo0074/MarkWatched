@@ -4,7 +4,7 @@ ServiceTypes=KonqPopupMenu/Plugin
 MimeType=video/*;inode/directory;
 # These will now appear in the main right-click menu
 Actions=markWatched;markUnwatched;syncProgress
-X-KDE-Submenu=WatchMark
+X-KDE-Submenu=MarkWatched
 
 [Desktop Action markWatched]
 Name=Mark as Watched

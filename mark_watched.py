@@ -1,13 +1,13 @@
 # You need to create a .desktop file in
-# ~/.local/share/kio/servicemenu/ (or /usr/share/kio/servicemenus/).
+# ~/.local/share/kio/servicemenus/ (or /usr/share/kio/servicemenus/).
 
 # You will need to install the Python Imaging Library:
-# For openSUSE: sudo zypper install python3-Pillow ffmpeg xdotool
-# For Debian/Ubuntu: sudo apt install python3-pil ffmpeg xdotool
+# For openSUSE: sudo zypper install python3-Pillow ffmpeg xdotool rsvg-convert
+# For Debian/Ubuntu: sudo apt install python3-pil ffmpeg xdotool rsvg-convert
 
-
+# Debug commands:
 # qdbus6 | grep dolphin
-#  org.kde.dolphin-342959
+# org.kde.dolphin-342959
 # qdbus6 org.kde.dolphin-342959 /dolphin/Dolphin_1
 
 import os
@@ -16,6 +16,7 @@ import hashlib
 import argparse
 import subprocess
 import time
+import shutil
 import traceback  # Added for detailed error reporting
 import urllib.parse
 # from pathlib import Path
@@ -28,6 +29,9 @@ THUMB_BASE = os.path.expanduser("~/.cache/thumbnails/")
 MIN_THRESHOLD = 5.0   # % below which is "unwatched"
 MAX_THRESHOLD = 90.0  # % above which is "watched" (green check)
 VIDEO_EXTS = ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv')
+
+APP_NAME = 'MarkWatched'
+APP_VERSION = '1.0.0'
 
 
 def get_qdbus_cmd():
@@ -181,78 +185,252 @@ def get_kde_thumbnail_path(video_path):
         return []
 
 
-def update_thumbnail(thumb_path, percentage, mode):
-    """Handles backup, restoration, and drawing."""
-    """Adaptive drawing for large vs small (Details/Compact) thumbnails."""
-    try:
-        bak_path = thumb_path + ".bak"
+def draw_checkmark(draw, center, radius, color=(50, 255, 50, 255)):
+    """
+    Draws a smooth checkmark. Uses a 'joint circle' at the vertex 
+    to ensure no pixels are missing in the V-shape.
+    """
+    # Scale width for oversampling (approx 20% of circle radius)
+    line_width = max(8, int(radius * 0.22))
+    joint_radius = line_width // 2
+    
+    # Points for the checkmark 'V'
+    # p1: Left Start, p2: Bottom Vertex (Pivot), p3: Right Top
+    p1 = (center[0] - radius * 0.5, center[1] + radius * 0.05)
+    p2 = (center[0] - radius * 0.1, center[1] + radius * 0.45)
+    p3 = (center[0] + radius * 0.55, center[1] - radius * 0.35)
+    
+    points = [p1, p2, p3]
 
-        # Manage the Backup
-        if not os.path.exists(bak_path):
-            # Create backup from original if it doesn't exist
+    # 1. Draw the lines with rounded joints (Pillow 8.2+)
+    draw.line(points, fill=color, width=line_width, joint="round")
+    
+    # Draw a circle exactly at the vertex p2 to bridge any gaps
+    # This ensures the 'hinge' of the V is perfectly solid.
+    draw.ellipse(
+        [p2[0] - joint_radius, p2[1] - joint_radius, 
+         p2[0] + joint_radius, p2[1] + joint_radius], 
+        fill=color
+    )
+    
+    # Optional: Add small round caps at the start and end of the lines
+    # for an even more polished 'premium' look
+    for p in [p1, p3]:
+        draw.ellipse(
+            [p[0] - joint_radius, p[1] - joint_radius, 
+             p[0] + joint_radius, p[1] + joint_radius], 
+            fill=color
+        )
+
+
+def apply_visual_overlay(img, percentage, mode, folder, is_small):
+    """
+    Creates a high-resolution overlay layer, draws UI elements, 
+    and downscales back to the image size for antialiasing.
+    """
+    w, h = img.size
+    oversample = 4  # Draw at 4x size for high-quality edges
+    canvas_w, canvas_h = w * oversample, h * oversample
+    
+    # High-res transparent layer
+    overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    if mode == "watched":
+        if is_small:
+            print("DEBUG: checkmark for small thumbnails")
+            # For list/details view
+            center = (canvas_w // 2, canvas_h // 2)
+            circle_r = int(canvas_h * 0.45)
+        else:
+            print("DEBUG: checkmark for bigger thumbnails")
+            # For icon view
+            circle_r = int(min(canvas_w, canvas_h) * 0.16)
+            # Higher margin for folders to avoid overlapping the 'tab' of the folder icon
+            margin_bottom = int(canvas_h * 0.15) if folder else int(canvas_h * 0.08)
+            margin_right = int(canvas_w * 0.12)
+            center = (canvas_w - circle_r - margin_right, canvas_h - circle_r - margin_bottom)
+
+        # Draw Background Circle (Dark translucent)
+        draw.ellipse(
+            [center[0]-circle_r, center[1]-circle_r, center[0]+circle_r, center[1]+circle_r], 
+            fill=(0, 0, 0, 180)
+        )
+
+        # Draw the Checkmark inside the circle
+        draw_checkmark(draw, center, circle_r)
+
+    elif mode == "sync":
+        # Progress Bar Logic (Green)
+        bar_h = canvas_h // 4 if is_small else max(20, int(canvas_h * 0.08))
+        # Background track
+        draw.rectangle([0, canvas_h - bar_h, canvas_w, canvas_h], fill=(0, 0, 0, 160))
+        # Progress fill
+        bar_w = int(canvas_w * (percentage / 100))
+        draw.rectangle([0, canvas_h - bar_h, bar_w, canvas_h], fill=(50, 255, 50, 255))
+
+    # Downscale overlay using LANCZOS (highest quality)
+    overlay = overlay.resize((w, h), resample=Image.LANCZOS)
+    
+    # Merge overlay with original
+    return Image.alpha_composite(img.convert("RGBA"), overlay)
+
+
+def update_thumbnail(thumb_path, percentage, mode, folder=False):
+    """Handles backup, restoration, and drawing."""
+    try:
+        # Determine paths
+        bak_path = thumb_path if folder else thumb_path + ".bak"
+        print(f"Updating thumbnail: {thumb_path}")
+
+        # Manage the Backup (for non-folder items)
+        if not folder and not os.path.exists(bak_path):
             os.replace(thumb_path, bak_path)
         
+        # Handle Restoration for 'unwatched' mode
         if mode == "unwatched":
-            # Restore original and remove backup
-            os.replace(bak_path, thumb_path)
-            print("Mode is 'unwatched'")
+            if not folder:
+                if os.path.exists(bak_path):
+                    os.replace(bak_path, thumb_path)
+            else:
+                item_path = thumb_path 
+                print(f"Removing watch mode from folder: {item_path}")
+                for f_name in [".directory", ".folder_watched.png"]:
+                    f_path = os.path.join(item_path, f_name)
+                    if os.path.exists(f_path):
+                        os.remove(f_path)
+                        print(f"Deleted: {f_path}")
             return
-
-        with Image.open(bak_path) as img:
-            # This captures the Thumb::MTime, Thumb::URI, etc.
-            metadata = img.info
-
-            img = img.convert("RGBA")
-            # Alpha Compositing: The script now uses a separate overlay layer 
-            # to ensure transparency and anti-aliasing look smooth.
-            overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
-            draw = ImageDraw.Draw(overlay)
-            w, h = img.size
-            
-            # Identify if we are dealing with small thumbnails (Compact/Details view)
-            is_small = h <= 128
-
-            if mode == "watched":
-                if is_small:
-                    # Centered checkmark taking entire height
-                    center = (w // 2, h // 2)
-                    size = h // 2
-                    draw.ellipse([center[0]-size, center[1]-size, center[0]+size, center[1]+size], fill=(0, 0, 0, 150))
-                    draw.line([(center[0]-size*0.5, center[1]), 
-                               (center[0]-size*0.1, center[1]+size*0.4), 
-                               (center[0]+size*0.5, center[1]-size*0.4)], 
-                              fill=(50, 255, 50, 255), width=max(2, h // 10))
-                else:
-                    # Corner checkmark for large views
-                    circle_r = int(min(w, h) * 0.15)
-                    margin_bottom = int(h * 0.05)
-                    margin_right = int(w * 0.10)
-                    center = (w - circle_r - margin_right, h - circle_r - margin_bottom)
-                    draw.ellipse([center[0]-circle_r, center[1]-circle_r, center[0]+circle_r, center[1]+circle_r], fill=(0, 0, 0, 180))
-                    draw.line([(center[0]-circle_r*0.5, center[1]), (center[0]-circle_r*0.1, center[1]+circle_r*0.4), (center[0]+circle_r*0.5, center[1]-circle_r*0.4)], fill=(50, 255, 50, 255), width=max(2, int(circle_r*0.2)))
-
-            elif mode == "sync":
-                # Progress Bar Height Logic
-                bar_height = h // 3 if is_small else max(4, int(h * 0.08))
                 
-                # Background
-                draw.rectangle([0, h - bar_height, w, h], fill=(0, 0, 0, 160))
-                # Progress
-                bar_width = int(w * (percentage / 100))
-                draw.rectangle([0, h - bar_height, bar_width, h], fill=(0, 255, 0, 255))
-            
-            # Save with Original Metadata
-            # This is the critical step to stop Dolphin from deleting it
-            combined = Image.alpha_composite(img, overlay)
+        # Drawing Logic
+        with Image.open(bak_path) as img:
+            # Capture KDE metadata (Thumb::URI, etc.)
+            metadata = img.info
+            is_small = img.size[1] <= 128
+
+            # Apply the visuals (Antialiased)
+            combined = apply_visual_overlay(img, percentage, mode, folder, is_small)
+
+            # Re-attach Metadata to the PNG
             pnginfo = PngImagePlugin.PngInfo()
             for k, v in metadata.items():
                 if isinstance(v, (str, bytes)):
                     pnginfo.add_text(k, str(v))
             
+            # Save final result
             combined.convert("RGB").save(thumb_path, "PNG", pnginfo=pnginfo)
             
     except Exception:
         traceback.print_exc()
+
+
+# def update_thumbnail(thumb_path, percentage, mode, folder=False):
+#     """Handles backup, restoration, and drawing."""
+#     """Adaptive drawing for large vs small (Details/Compact) thumbnails."""
+#     try:
+#         if folder:
+#             bak_path = thumb_path
+#         else:
+#             bak_path = thumb_path + ".bak"
+
+#         print(f"Updating thumbnail: {thumb_path}")
+
+#         # Manage the Backup
+#         if folder == False and not os.path.exists(bak_path):
+#             # Create backup from original if it doesn't exist
+#             os.replace(thumb_path, bak_path)
+        
+#         if mode == "unwatched":
+#             if folder == False:
+#                 # Restore original thumbnail and remove backup
+#                 if os.path.exists(bak_path):
+#                     os.replace(bak_path, thumb_path)
+#             else:
+#                 item_path = thumb_path # is folder
+#                 print(f"Removing watch mode from folder: {item_path}")
+#                 dot_dir = os.path.join(item_path, ".directory")
+#                 folder_png = os.path.join(item_path, ".folder_watched.png")
+                
+#                 for file_to_remove in [dot_dir, folder_png]:
+#                     print(f"Removing file: {file_to_remove}")
+#                     if os.path.exists(file_to_remove):
+#                         try:
+#                             os.remove(file_to_remove)
+#                             print(f"Deleted: {file_to_remove}")
+#                         except Exception as e:
+#                             print(f"Error deleting {file_to_remove}: {e}")
+#             return
+                
+#         with Image.open(bak_path) as img:
+#             # This captures the Thumb::MTime, Thumb::URI, etc.
+#             metadata = img.info
+
+#             img = img.convert("RGBA")
+#             # Alpha Compositing: The script now uses a separate overlay layer 
+#             # to ensure transparency and anti-aliasing look smooth.
+#             overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+#             draw = ImageDraw.Draw(overlay)
+#             w, h = img.size
+            
+#             # Identify if we are dealing with small thumbnails (Compact/Details view)
+#             is_small = h <= 128
+
+#             if mode == "watched":
+#                 if is_small:
+#                     print("DEBUG: checkmark for small thumbnails")
+#                     # Centered checkmark taking entire height
+#                     center = (w // 2, h // 2)
+#                     size = h // 2
+#                     draw.ellipse([center[0]-size, center[1]-size, center[0]+size, center[1]+size], fill=(0, 0, 0, 150))
+                    
+#                     # Previous simple checkmark commented out:
+#                     draw.line([(center[0]-size*0.5, center[1]), 
+#                                (center[0]-size*0.1, center[1]+size*0.4), 
+#                                (center[0]+size*0.5, center[1]-size*0.4)], 
+#                               fill=(50, 255, 50, 255), width=max(2, h // 10))
+#                 else:
+#                     print("DEBUG: checkmark for bigger thumbnails")
+#                     # Corner checkmark for large views
+#                     circle_r = int(min(w, h) * 0.15)
+#                     if folder == False:
+#                         margin_bottom = int(h * 0.05)
+#                     else:
+#                         margin_bottom = int(h * 0.15)
+#                     margin_right = int(w * 0.10)
+#                     center = (w - circle_r - margin_right, h - circle_r - margin_bottom)
+#                     draw.ellipse(
+#                         [center[0]-circle_r, center[1]-circle_r, center[0]+circle_r, center[1]+circle_r], 
+#                         fill=(0, 0, 0, 180)
+#                     )
+#                     draw.line(
+#                         [(center[0]-circle_r*0.5, center[1]), 
+#                         (center[0]-circle_r*0.1, center[1]+circle_r*0.4), 
+#                         (center[0]+circle_r*0.5, center[1]-circle_r*0.4)], 
+#                         fill=(50, 255, 50, 255), width=max(2, int(circle_r*0.2))
+#                     )
+
+#             elif mode == "sync":
+#                 # Progress Bar Height Logic
+#                 bar_height = h // 3 if is_small else max(4, int(h * 0.08))
+                
+#                 # Background
+#                 draw.rectangle([0, h - bar_height, w, h], fill=(0, 0, 0, 160))
+#                 # Progress
+#                 bar_width = int(w * (percentage / 100))
+#                 draw.rectangle([0, h - bar_height, bar_width, h], fill=(0, 255, 0, 255))
+            
+#             # Save with Original Metadata
+#             # This is the critical step to stop Dolphin from deleting it
+#             combined = Image.alpha_composite(img, overlay)
+#             pnginfo = PngImagePlugin.PngInfo()
+#             for k, v in metadata.items():
+#                 if isinstance(v, (str, bytes)):
+#                     pnginfo.add_text(k, str(v))
+            
+#             combined.convert("RGB").save(thumb_path, "PNG", pnginfo=pnginfo)
+            
+#     except Exception:
+#         traceback.print_exc()
 
 
 def process_item(item_path, mode):
@@ -337,10 +515,13 @@ def process_item(item_path, mode):
             if ini_override_int != 0 or round(ini_progress_float) == watch_progress_perc:
                 if thumbnail_backup_exists:
                     should_update_thumbnail = False
+                    print("Found thumbnail .bak")
                 else:
-                    # Update thumbnail if backup doesn't exist to sync with
+                    # Update thumbnail if .bak file doesn't exist, to sync with
                     # ini file for watched mode
-                    ini_data_to_write["watchmark_progress"] = ini_progress_str
+                    if ini_override_int == 1:
+                        mode = "watched"
+                        print("Sync watched mode")
             else:
                 # A sync is required. Queue progress and update mode for thumbnail.
                 ini_data_to_write["watchmark_progress"] = watch_progress_perc
@@ -352,7 +533,8 @@ def process_item(item_path, mode):
                     mode = "unwatched"
                 elif watch_progress_perc > MAX_THRESHOLD:
                     mode = "watched"
-                print("Updated mode: " + mode)
+
+            print("Updated mode from sync to " + mode)
 
     if ini_data_to_write:
         write_smplayer_ini_data(item_path, ini_data_to_write)
@@ -422,6 +604,18 @@ def close_progress_bar(dbus_ref):
     subprocess.run([QDBUS, service, path, "close"], capture_output=True)
 
 
+def refresh_kde_cache():
+    """Forces KDE to rebuild its configuration and icon caches."""
+    # kbuildsycoca6 rebuilds the system configuration cache (Service Menus, Icons, etc.)
+    subprocess.run(["kbuildsycoca6"], capture_output=True)
+    
+    # Additionally, we can notify the system that the icon theme changed
+    # This is a bit 'nuclear' but ensures the UI updates
+    # subprocess.run([
+    #     "qdbus6", "org.kde.KWin", "/KWin", "org.kde.KWin.reconfigure"
+    # ], capture_output=True)
+
+
 def force_dolphin_reload():
     """
     Sends an F5 key press to the active window to force a refresh.
@@ -442,6 +636,9 @@ def force_dolphin_reload():
         time.sleep(0.2)
         subprocess.run(["xdotool", "key", "F5"], capture_output=True)
         print("Sent F5 to refresh Dolphin.")
+
+        refresh_kde_cache()
+
     except Exception:
         traceback.print_exc()
         print("Failed to send F5 key press. View may not be updated.")
@@ -467,6 +664,77 @@ def wait_for_dbus_object(dbus_ref, timeout=3.0):
         
     print(f"DEBUG: Timeout waiting for {service}")
     return False
+
+
+def mark_folder_watched(folder_path, icon_path, mode):
+    """
+    Converts a system SVG icon to PNG, applies a checkmark, 
+    and configures the folder to show only that icon.
+    """
+    print(f"DEBUG: Marking folder: {folder_path}")
+
+    if mode == "unwatched":
+        print("Setting folder to unwatched")
+        update_thumbnail(folder_path, 0, "unwatched", True)
+        return
+
+    try:
+        # Define paths
+        dest_icon_name = ".folder_watched.png"  # Hidden file
+        dest_icon_path = os.path.join(folder_path, dest_icon_name)
+
+        # Check if rsvg-convert is actually available in the environment
+        if not shutil.which("rsvg-convert"):
+            print("ERROR: 'rsvg-convert' not found. Folder icon cannot be generated.")
+            return
+        
+        # Rasterize SVG to PNG using rsvg-convert
+        # -w 256 ensures a high-quality thumbnail size
+        if os.path.exists(icon_path):
+            result = subprocess.run(
+                ["rsvg-convert", "-w", "256", "-f", "png", "-o", dest_icon_path, icon_path],
+                capture_output=True, text=True
+            )
+            
+            if result.returncode != 0:
+                print(f"RSVG Error: {result.stderr}")
+                return
+        else:
+            print(f"Error: Icon not found at {icon_path}")
+            return
+
+        # Use existing Pillow function to draw the 'Watched' checkmark
+        # We pass 100 to trigger the MAX_THRESHOLD (green check)
+        if os.path.exists(dest_icon_path):
+            update_thumbnail(dest_icon_path, 100, "watched", True)
+            
+            # Create the .directory file
+            dot_dir_path = os.path.join(folder_path, ".directory")
+            
+            # Use the ABSOLUTE path for the Icon key to ensure Dolphin finds it
+            content = (
+                "[Desktop Entry]\n"
+                f"Icon={dest_icon_path}\n\n"
+                "[ViewProperties]\n"
+                "ShowPreview=false\n"
+            )
+            
+            with open(dot_dir_path, "w") as f:
+                f.write(content)
+                
+            # Refresh
+            os.utime(folder_path, None)
+
+            # Tell all file managers that this specific directory changed
+            subprocess.run([
+                "qdbus6", "org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1.PropertiesChanged", folder_path
+            ], capture_output=True)
+
+            print(f"Successfully marked folder: {folder_path}")
+
+    except Exception:
+        traceback.print_exc()
 
 
 # def show_notification(count):
@@ -508,24 +776,47 @@ def main():
 
     mode = "sync"
     processed_count = 0
-    if args.mark_watched: mode = "watched"
-    if args.mark_unwatched: mode = "unwatched"
-
-    # Pre-calculate count for accurate progress bar
+    folder_mode = False
     all_files = []
-    for path in args.paths:
-        if os.path.isdir(path):
-            for root, _, files in os.walk(path):
-                for f in files:
-                    if f.lower().endswith(VIDEO_EXTS):
-                        all_files.append(os.path.join(root, f))
-        else:
-            all_files.append(path)
 
-    if not all_files:
-        return
+    if args.mark_watched: mode = "watched"
+    if args.mark_unwatched: 
+        # Confirmation Dialog for Unwatched
+        try:
+            confirm = subprocess.run(
+                ["kdialog", "--title", APP_NAME, "--warningyesno", 
+                 "Are you sure you want to mark these items as unwatched?\nThis will reset your watch progress."],
+                capture_output=True
+            )
+            if confirm.returncode != 0:
+                print("Operation cancelled by user.")
+                return
+        except Exception:
+            pass # Fallback if kdialog fails
+        mode = "unwatched"
+
+    # Check if a single folder is selected for marking
+    if len(args.paths) == 1 and os.path.isdir(args.paths[0]):
+        folder_mode = True
+        all_files.append(args.paths[0])
+
+    else:
+        # Pre-calculate count for accurate progress bar
+        for path in args.paths:
+            if os.path.isdir(path):
+                for root, _, files in os.walk(path):
+                    for f in files:
+                        if f.lower().endswith(VIDEO_EXTS):
+                            all_files.append(os.path.join(root, f))
+            else:
+                all_files.append(path)
+
+        if not all_files:
+            return
 
     dbus_ref = create_progress_bar(len(all_files))
+
+    print(f"Starting {APP_NAME} version {APP_VERSION}")
     print(f"DEBUG: Number of total files: {len(all_files)}")
     print(f"DEBUG: dbus_ref: {dbus_ref}")
 
@@ -539,8 +830,13 @@ def main():
     for i, file_path in enumerate(all_files):
         print("----------------------------------")
         print(f"DEBUG: File: {i+1}/{len(all_files)}")
-        process_item(file_path, mode)
-        update_progress_bar(dbus_ref, i + 1)
+
+        if folder_mode == False:
+            process_item(file_path, mode)
+            update_progress_bar(dbus_ref, i + 1)
+
+        else:
+            mark_folder_watched(file_path, "/usr/share/icons/breeze/places/64/folder.svg", mode)
 
     close_progress_bar(dbus_ref)
     force_dolphin_reload()
