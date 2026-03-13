@@ -5,6 +5,13 @@
 # For openSUSE: sudo zypper install python3-Pillow ffmpeg xdotool rsvg-convert
 # For Debian/Ubuntu: sudo apt install python3-pil ffmpeg xdotool rsvg-convert
 
+# Usage
+# Use all view modes in file manager to generate thumbnails.
+# Use the menu to mark a folder or multiple file as watched.
+# Use sync to synchronize the watch progress from SMPlayer INI files with thumbnails.
+# Use unwatched to remove watch progress from thumbnails.
+# Even if thumbnails are deleted the progress will be updated using INI files.
+
 # Debug commands:
 # qdbus6 | grep dolphin
 # org.kde.dolphin-342959
