@@ -28,19 +28,26 @@ import shutil
 import traceback  # Added for detailed error reporting
 import urllib.parse
 import threading
+from enum import Enum
 # from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 
 
 # --- CONFIGURATION ---
+BAK_INI_PATH = "/home/me/Documents/INI_bak"
 INI_BASE_PATH = os.path.expanduser("~/.config/smplayer/file_settings/")
 THUMB_BASE = os.path.expanduser("~/.cache/thumbnails/")
 MIN_THRESHOLD = 5.0   # % below which is "unwatched"
 MAX_THRESHOLD = 90.0  # % above which is "watched" (green check)
-VIDEO_EXTS = ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv')
+VIDEO_EXTS = ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv', '.mpeg', '.mpg')
 
 APP_NAME = 'MarkWatched'
 APP_VERSION = '1.0.0'
+
+class AppMode(Enum):
+    WATCHED = "watched"
+    UNWATCHED = "unwatched"
+    SYNC = "sync"
 
 # Create a global lock
 progress_lock = threading.Lock()
@@ -152,6 +159,17 @@ def write_smplayer_ini_data(filename, data_to_write):
         os.makedirs(ini_dir, exist_ok=True)
         ini_path = os.path.join(ini_dir, f"{h}.ini")
 
+        if BAK_INI_PATH and os.path.exists(ini_path):
+            try:
+                bak_dir = os.path.join(BAK_INI_PATH, h[0])
+                # Create the specific subfolder (e.g., .../INI_bak/d/)
+                os.makedirs(bak_dir, exist_ok=True) 
+                bak_path = os.path.join(bak_dir, f"{h}.ini")
+                print(f"Backup file: {ini_path} to {bak_path}")
+                shutil.copy2(ini_path, bak_path)
+            except Exception:
+                traceback.print_exc()
+
         lines = []
         if os.path.exists(ini_path):
             with open(ini_path, 'r', errors='replace') as f:
@@ -262,7 +280,7 @@ def apply_visual_overlay(img, percentage, mode, folder, is_small):
     overlay = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
 
-    if mode == "watched":
+    if mode == AppMode.WATCHED:
         if is_small:
             print(f"[Thread-{thread_id}] DEBUG: checkmark for small thumbnails")
             # For list/details view
@@ -286,7 +304,7 @@ def apply_visual_overlay(img, percentage, mode, folder, is_small):
         # Draw the Checkmark inside the circle
         draw_checkmark(draw, center, circle_r)
 
-    elif mode == "sync":
+    elif mode == AppMode.SYNC:
         # Progress Bar Logic (Green)
         bar_h = canvas_h // 4 if is_small else max(20, int(canvas_h * 0.08))
         # Background track
@@ -317,7 +335,7 @@ def update_thumbnail(thumb_path, percentage, mode, folder=False):
             os.replace(thumb_path, bak_path)
         
         # Handle Restoration for 'unwatched' mode
-        if mode == "unwatched":
+        if mode == AppMode.UNWATCHED:
             if not folder:
                 if os.path.exists(bak_path):
                     os.replace(bak_path, thumb_path)
@@ -395,7 +413,7 @@ def process_item(item_path, mode):
 
     print(f"[Thread-{thread_id}] Received mode: {mode}")
 
-    if mode == "watched":
+    if mode == AppMode.WATCHED:
         # Set the manual override to 1 to prevent sync from changing it, 
         # set watch progress to 100 to save the 'watched' status.
         # Override bit and 100 percent watch progress means watched.
@@ -406,14 +424,14 @@ def process_item(item_path, mode):
             ini_data_to_write["watchmark_progress"] = watch_progress_perc
             should_update_thumbnail = True
 
-    elif mode == "unwatched":
+    elif mode == AppMode.UNWATCHED:
         # Remove manual override and set progress to 0
         if ini_progress_float != 0 or ini_override_int != 0:
             ini_data_to_write["watchmark_override"] = 0
             ini_data_to_write["watchmark_progress"] = watch_progress_perc
         should_update_thumbnail = True
 
-    elif mode == "sync":
+    elif mode == AppMode.SYNC:
         duration = 0
         current_sec = 0
 
@@ -444,7 +462,7 @@ def process_item(item_path, mode):
                     # Update thumbnail if .bak file doesn't exist, to sync with
                     # ini file for watched mode
                     if ini_override_int == 1:
-                        mode = "watched"
+                        mode = AppMode.WATCHED
                         print(f"[Thread-{thread_id}] Sync watched mode")
             else:
                 # A sync is required. Queue progress and update mode for thumbnail.
@@ -454,9 +472,9 @@ def process_item(item_path, mode):
                 print(f"[Thread-{thread_id}] Watch time: {watch_progress_perc}%")
 
                 if watch_progress_perc < MIN_THRESHOLD:
-                    mode = "unwatched"
+                    mode = AppMode.UNWATCHED
                 elif watch_progress_perc > MAX_THRESHOLD:
-                    mode = "watched"
+                    mode = AppMode.WATCHED
 
             print(f"[Thread-{thread_id}] Updated mode from sync to {mode}")
 
@@ -599,9 +617,9 @@ def mark_folder_watched(folder_path, icon_path, mode):
     """
     print(f"DEBUG: Marking folder: {folder_path}")
 
-    if mode == "unwatched":
+    if mode == AppMode.UNWATCHED:
         print("Setting folder to unwatched")
-        update_thumbnail(folder_path, 0, "unwatched", True)
+        update_thumbnail(folder_path, 0, AppMode.UNWATCHED, True)
         return
 
     try:
@@ -632,7 +650,7 @@ def mark_folder_watched(folder_path, icon_path, mode):
         # Use existing Pillow function to draw the 'Watched' checkmark
         # We pass 100 to trigger the MAX_THRESHOLD (green check)
         if os.path.exists(dest_icon_path):
-            update_thumbnail(dest_icon_path, 100, "watched", True)
+            update_thumbnail(dest_icon_path, 100, AppMode.WATCHED, True)
             
             # Create the .directory file
             dot_dir_path = os.path.join(folder_path, ".directory")
@@ -700,12 +718,12 @@ def main():
     parser.add_argument('--sync', action='store_true')
     args = parser.parse_args()
 
-    mode = "sync"
+    mode = AppMode.SYNC
     all_files = []
 
     print(f"Starting {APP_NAME} version {APP_VERSION}")
 
-    if args.mark_watched: mode = "watched"
+    if args.mark_watched: mode = AppMode.WATCHED
     if args.mark_unwatched:
         # Confirmation Dialog for Unwatched
         try:
@@ -721,7 +739,7 @@ def main():
             print("kdialog not found, proceeding without confirmation.")
         except Exception:
             pass  # Fallback if kdialog fails for other reasons
-        mode = "unwatched"
+        mode = AppMode.UNWATCHED
 
     # Handle the single folder case separately as it doesn't need parallel processing
     if len(args.paths) == 1 and os.path.isdir(args.paths[0]):
@@ -792,46 +810,16 @@ def main():
     end_time = time.perf_counter()
     total_duration = end_time - start_time
 
-# Mar 13 08:48:56 linux python3[97247]: ========================================
-# Mar 13 08:48:56 linux python3[97247]: BENCHMARK RESULT
-# Mar 13 08:48:56 linux python3[97247]: Mode: ThreadPoolExecutor
-# Mar 13 08:48:56 linux python3[97247]: Total Files: 19
-# Mar 13 08:48:56 linux python3[97247]: Total Time:  0.59 seconds
-# Mar 13 08:48:56 linux python3[97247]: Avg Speed:   0.0313 seconds/file
-# Mar 13 08:48:56 linux python3[97247]: ========================================
-
-# Mar 13 08:57:57 linux python3[99550]: ========================================
-# Mar 13 08:57:57 linux python3[99550]: BENCHMARK RESULT
-# Mar 13 08:57:57 linux python3[99550]: Mode: ThreadPoolExecutor
-# Mar 13 08:57:57 linux python3[99550]: Total Files: 54
-# Mar 13 08:57:57 linux python3[99550]: Total Time:  1.01 seconds
-# Mar 13 08:57:57 linux python3[99550]: Avg Speed:   0.0186 seconds/file
-# Mar 13 08:57:57 linux python3[99550]: ========================================
-
-
-# Mar 13 08:52:11 linux python3[98062]: ========================================
-# Mar 13 08:52:11 linux python3[98062]: BENCHMARK RESULT
-# Mar 13 08:52:11 linux python3[98062]: Mode: ProcessPoolExecutor
-# Mar 13 08:52:11 linux python3[98062]: Total Files: 19
-# Mar 13 08:52:11 linux python3[98062]: Total Time:  0.42 seconds
-# Mar 13 08:52:11 linux python3[98062]: Avg Speed:   0.0221 seconds/file
-# Mar 13 08:52:11 linux python3[98062]: ========================================
-
-# Mar 13 08:55:38 linux python3[98793]: ========================================
-# Mar 13 08:55:38 linux python3[98793]: BENCHMARK RESULT
-# Mar 13 08:55:38 linux python3[98793]: Mode: ProcessPoolExecutor
-# Mar 13 08:55:38 linux python3[98793]: Total Files: 54
-# Mar 13 08:55:38 linux python3[98793]: Total Time:  1.98 seconds
-# Mar 13 08:55:38 linux python3[98793]: Avg Speed:   0.0368 seconds/file
-# Mar 13 08:55:38 linux python3[98793]: ========================================
+    end_time = time.perf_counter()
+    print(f"\nFinished in {total_duration:.2f} seconds.")
     
-    print("\n" + "="*40)
-    print(f"BENCHMARK RESULT")
-    print(f"Mode: ThreadPoolExecutor")
-    print(f"Total Files: {len(all_files)}")
-    print(f"Total Time:  {total_duration:.2f} seconds")
-    print(f"Avg Speed:   {total_duration/len(all_files):.4f} seconds/file")
-    print("="*40)
+    # print("\n" + "="*40)
+    # print(f"BENCHMARK RESULT")
+    # print(f"Mode: ThreadPoolExecutor")
+    # print(f"Total Files: {len(all_files)}")
+    # print(f"Total Time:  {total_duration:.2f} seconds")
+    # print(f"Avg Speed:   {total_duration/len(all_files):.4f} seconds/file")
+    # print("="*40)
 
     close_progress_bar(dbus_ref)
     force_dolphin_reload()

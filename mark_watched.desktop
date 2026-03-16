@@ -10,14 +10,14 @@ X-KDE-Submenu=MarkWatched
 Name=Mark as Watched
 Icon=task-complete
 # Replace /path/to/venv/ with the actual path to your virtual environment
-Exec=/mnt/D_TOSHIBA_S300/python/bin/python3 /mnt/D_TOSHIBA_S300/Projects/Dolphin_WatchMark/mark_watched.py --mark-watched %F
+Exec=/mnt/D_TOSHIBA_S300/python/bin/python3 /mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --mark-watched %F
 
 [Desktop Action markUnwatched]
 Name=Mark as Unwatched
 Icon=edit-clear
-Exec=/mnt/D_TOSHIBA_S300/python/bin/python3 /mnt/D_TOSHIBA_S300/Projects/Dolphin_WatchMark/mark_watched.py --mark-unwatched %F
+Exec=/mnt/D_TOSHIBA_S300/python/bin/python3 /mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --mark-unwatched %F
 
 [Desktop Action syncProgress]
 Name=Sync Progress from INI
 Icon=view-refresh
-Exec=/mnt/D_TOSHIBA_S300/python/bin/python3 /mnt/D_TOSHIBA_S300/Projects/Dolphin_WatchMark/mark_watched.py --sync %F
+Exec=/mnt/D_TOSHIBA_S300/python/bin/python3 /mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --sync %F
