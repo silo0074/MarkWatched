@@ -24,6 +24,8 @@
         "ffmpegthumbnailer",
         "ffprobe",
         "frombuffer",
+        "getexistingdirectory",
+        "getfattr",
         "getpid",
         "gridline",
         "Istrate",
@@ -42,6 +44,7 @@
         "Liviu",
         "longlongformat",
         "lupdate",
+        "markwatched",
         "Movero",
         "msgbox",
         "nokey",
@@ -67,6 +70,7 @@
         "servicemenu",
         "servicemenus",
         "sess",
+        "setfattr",
         "signum",
         "smplayer",
         "socat",
@@ -76,6 +80,8 @@
         "unpolish",
         "utimensat",
         "warningyesno",
-        "watchmark"
+        "watchmark",
+        "xattr",
+        "xattrs"
     ]
 }

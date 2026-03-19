@@ -28,18 +28,21 @@ import shutil
 import traceback  # Added for detailed error reporting
 import urllib.parse
 import threading
+import configparser
 from enum import Enum
 # from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, PngImagePlugin
 
 
 # --- CONFIGURATION ---
-BAK_INI_PATH = "/home/me/Documents/INI_bak"
 INI_BASE_PATH = os.path.expanduser("~/.config/smplayer/file_settings/")
 THUMB_BASE = os.path.expanduser("~/.cache/thumbnails/")
 MIN_THRESHOLD = 5.0   # % below which is "unwatched"
 MAX_THRESHOLD = 90.0  # % above which is "watched" (green check)
 VIDEO_EXTS = ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv', '.mpeg', '.mpg')
+
+CONFIG_DIR = os.path.expanduser("~/.config/markwatched/")
+CONFIG_FILE = os.path.join(CONFIG_DIR, "config.ini")
 
 APP_NAME = 'MarkWatched'
 APP_VERSION = '1.0.0'
@@ -48,9 +51,11 @@ class AppMode(Enum):
     WATCHED = "watched"
     UNWATCHED = "unwatched"
     SYNC = "sync"
+    BACKUP = "backup"
 
 # Create a global lock
 progress_lock = threading.Lock()
+GLOBAL_BACKUP_PATH = None
 
 def get_qdbus_cmd():
     """Detects the available qdbus command on the system."""
@@ -62,6 +67,132 @@ def get_qdbus_cmd():
 QDBUS = get_qdbus_cmd()
 print(QDBUS)
 
+
+def force_baloo_update(file_path):
+    """Tell Baloo to forget the file and re-index it from scratch."""
+    thread_id = threading.get_native_id()
+    
+    try:
+        # 1. Clear the old entry
+        subprocess.run(["balooctl6", "clear", file_path], capture_output=True, text=True)
+        
+        # 2. THE FIX: Small sleep to let Baloo's database lock release
+        # 0.2 seconds is usually enough for the Baloo worker to cycle
+        time.sleep(0.2)
+        
+        # 3. Force a fresh index
+        subprocess.run(["balooctl6", "index", file_path], capture_output=True, text=True)
+        
+        print(f"[Thread-{thread_id}] Baloo index cycled for {os.path.basename(file_path)}")
+    except Exception:
+        traceback.print_exc()
+
+
+def get_current_tags(file_path):
+    """Returns a list of current tags for the file."""
+    try:
+        # -n user.xdg.tags: get only the tags attribute
+        # --only-values: just get the string value, no header
+        result = subprocess.run(
+            ["getfattr", "-n", "user.xdg.tags", "--only-values", file_path],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            # Tags are usually comma-separated in the attribute
+            return [t.strip() for t in result.stdout.split(",") if t.strip()]
+    except Exception:
+        pass
+    return []
+
+
+def add_dolphin_tag(file_path, tag_name="watched"):
+    """Adds a tag without duplicating it or overwriting others."""
+    thread_id = threading.get_native_id()
+    current_tags = get_current_tags(file_path)
+
+    if tag_name in current_tags:
+        print(f"[Thread-{thread_id}] Tag '{tag_name}' already exists.")
+        return
+
+    current_tags.append(tag_name)
+    new_tags_str = ",".join(current_tags)
+
+    try:
+        subprocess.run(
+            ["setfattr", "-n", "user.xdg.tags", "-v", new_tags_str, file_path],
+            check=True, capture_output=True
+        )
+
+        # Force Baloo to update its database for this file
+        force_baloo_update(file_path)
+
+        print(f"[Thread-{thread_id}] Added tag '{tag_name}' to {os.path.basename(file_path)}")
+    except subprocess.CalledProcessError as e:
+        print(f"[Thread-{thread_id}] Error adding tag: {e.stderr.decode().strip()}")
+
+
+def remove_dolphin_tag(file_path, tag_name="watched"):
+    """Removes ONLY the specified tag, preserving all others."""
+    thread_id = threading.get_native_id()
+    current_tags = get_current_tags(file_path)
+
+    if tag_name not in current_tags:
+        return
+
+    # Filter out the tag
+    new_tags = [t for t in current_tags if t != tag_name]
+
+    try:
+        if not new_tags:
+            # If no tags left, remove the attribute entirely to keep it clean
+            subprocess.run(["setfattr", "-x", "user.xdg.tags", file_path], check=True)
+        else:
+            # Otherwise, write the remaining tags back
+            new_tags_str = ",".join(new_tags)
+            subprocess.run(
+                ["setfattr", "-n", "user.xdg.tags", "-v", new_tags_str, file_path],
+                check=True
+            )
+
+        # Force Baloo to update its database for this file
+        force_baloo_update(file_path)
+
+        print(f"[Thread-{thread_id}] Removed tag '{tag_name}' from {os.path.basename(file_path)}")
+    except subprocess.CalledProcessError as e:
+        # Note: -x might fail if the attribute was already gone, which is fine
+        pass
+
+
+def get_backup_directory():
+    """Gets or sets the backup directory using a persistent config file."""
+    config = configparser.ConfigParser()
+    if os.path.exists(CONFIG_FILE):
+        config.read(CONFIG_FILE)
+    
+    path = config.get("General", "backup_path", fallback=None)
+    
+    if path and os.path.isdir(path):
+        return path
+    
+    # Prompt user
+    try:
+        cmd = ["kdialog", "--title", APP_NAME, "--getexistingdirectory", os.path.expanduser("~")]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            selected_path = result.stdout.strip()
+            if selected_path:
+                if not os.path.exists(CONFIG_DIR):
+                    os.makedirs(CONFIG_DIR)
+                if not config.has_section("General"):
+                    config.add_section("General")
+                config.set("General", "backup_path", selected_path)
+                with open(CONFIG_FILE, "w") as f:
+                    config.write(f)
+                return selected_path
+    except Exception:
+        traceback.print_exc()
+    
+    return None
 
 def get_duration(video_path):
     """Uses ffprobe to get video duration since SMPlayer doesn't save it."""
@@ -158,17 +289,6 @@ def write_smplayer_ini_data(filename, data_to_write):
         ini_dir = os.path.join(INI_BASE_PATH, h[0])
         os.makedirs(ini_dir, exist_ok=True)
         ini_path = os.path.join(ini_dir, f"{h}.ini")
-
-        if BAK_INI_PATH and os.path.exists(ini_path):
-            try:
-                bak_dir = os.path.join(BAK_INI_PATH, h[0])
-                # Create the specific subfolder (e.g., .../INI_bak/d/)
-                os.makedirs(bak_dir, exist_ok=True) 
-                bak_path = os.path.join(bak_dir, f"{h}.ini")
-                print(f"Backup file: {ini_path} to {bak_path}")
-                shutil.copy2(ini_path, bak_path)
-            except Exception:
-                traceback.print_exc()
 
         lines = []
         if os.path.exists(ini_path):
@@ -377,6 +497,27 @@ def process_item(item_path, mode):
 
     print("----------------------------------------")
     print(f"[Thread-{thread_id}] Starting: {item_path}")
+
+    if mode == AppMode.BACKUP:
+        if not GLOBAL_BACKUP_PATH:
+            return
+
+        h = get_smplayer_hash(item_path)
+        if not h: return
+        
+        src_ini = os.path.join(INI_BASE_PATH, h[0], f"{h}.ini")
+    
+        if os.path.exists(src_ini):
+            dest_dir = os.path.join(GLOBAL_BACKUP_PATH, h[0])
+            os.makedirs(dest_dir, exist_ok=True)
+            
+            # This will overwrite the file if it exists.
+            # It also preserves the original metadata (timestamps, etc.)
+            shutil.copy2(src_ini, dest_dir)
+            
+            print(f"[Thread-{thread_id}] Backed up INI to {dest_dir}")
+        return
+
     t_paths = get_kde_thumbnail_path(item_path)
 
     print(f"[Thread-{thread_id}] Thumbnail path: {t_paths}")
@@ -478,14 +619,23 @@ def process_item(item_path, mode):
 
             print(f"[Thread-{thread_id}] Updated mode from sync to {mode}")
 
+    # Add/remove KDE tags
+    if mode == AppMode.WATCHED:
+        add_dolphin_tag(item_path, "watched")
+    elif mode == AppMode.UNWATCHED:
+        remove_dolphin_tag(item_path, "watched")
+
+    # Write INI file
     if ini_data_to_write:
         write_smplayer_ini_data(item_path, ini_data_to_write)
     else:
         print(f"[Thread-{thread_id}] Skipping INI update")
 
+    # Update thumbnail
     if should_update_thumbnail:
         for path in t_paths:
             update_thumbnail(path, watch_progress_perc, mode)
+
     else:
         print(f"[Thread-{thread_id}] Skipping thumbnail update")
 
@@ -671,7 +821,7 @@ def mark_folder_watched(folder_path, icon_path, mode):
 
             # Tell all file managers that this specific directory changed
             subprocess.run([
-                "qdbus6", "org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+                QDBUS, "org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
                 "org.freedesktop.FileManager1.PropertiesChanged", folder_path
             ], capture_output=True)
 
@@ -716,6 +866,7 @@ def main():
     parser.add_argument('--mark-watched', action='store_true')
     parser.add_argument('--mark-unwatched', action='store_true')
     parser.add_argument('--sync', action='store_true')
+    parser.add_argument('--backup-ini', action='store_true')
     args = parser.parse_args()
 
     mode = AppMode.SYNC
@@ -724,6 +875,15 @@ def main():
     print(f"Starting {APP_NAME} version {APP_VERSION}")
 
     if args.mark_watched: mode = AppMode.WATCHED
+    if args.backup_ini: mode = AppMode.BACKUP
+
+    if mode == AppMode.BACKUP:
+        global GLOBAL_BACKUP_PATH
+        GLOBAL_BACKUP_PATH = get_backup_directory()
+        if not GLOBAL_BACKUP_PATH:
+            print("Backup path selection cancelled.")
+            return
+
     if args.mark_unwatched:
         # Confirmation Dialog for Unwatched
         try:
@@ -742,7 +902,7 @@ def main():
         mode = AppMode.UNWATCHED
 
     # Handle the single folder case separately as it doesn't need parallel processing
-    if len(args.paths) == 1 and os.path.isdir(args.paths[0]):
+    if mode != AppMode.BACKUP and len(args.paths) == 1 and os.path.isdir(args.paths[0]):
         mark_folder_watched(args.paths[0], "/usr/share/icons/breeze/places/64/folder.svg", mode)
         force_dolphin_reload()
         return  # Exit after handling the single folder

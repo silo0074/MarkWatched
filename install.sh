@@ -1,28 +1,34 @@
 #!/bin/bash
 
 # --- Configuration ---
-PYTHON_PATH="/mnt/D_TOSHIBA_S300/python/bin/python3" # replace path
+PYTHON_PATH="" # Replace with "/custom/path/python3" if desired
 
 DESKTOP_FILE="mark_watched.desktop"
 PYTHON_SCRIPT="mark_watched.py"
 TARGET_DIR="$HOME/.local/share/kio/servicemenus"
 CURRENT_DIR=$(pwd)
 
-# Detect Python path (Checks for venv in current dir, then falls back)
-# if [ -d "$CURRENT_DIR/venv" ]; then
-#     PYTHON_PATH="$CURRENT_DIR/venv/bin/python3"
-#     echo "Using virtual environment: $PYTHON_PATH"
-# else
-#     PYTHON_PATH=$(which python3)
-#     echo "Using system python: $PYTHON_PATH"
-# fi
+# 1. Check if CUSTOM path is provided and valid
+if [ -n "$PYTHON_PATH" ] && [ -f "$PYTHON_PATH" ]; then
+    echo "Using custom Python path: $PYTHON_PATH"
+
+# 2. Else detect venv
+elif [ -d "$CURRENT_DIR/venv" ]; then
+    PYTHON_PATH="$CURRENT_DIR/venv/bin/python3"
+    echo "Using virtual environment: $PYTHON_PATH"
+
+# 3. Fallback to system
+else
+    PYTHON_PATH=$(which python3)
+    echo "Using system python: $PYTHON_PATH"
+fi
 
 echo "Installing MarkWatched Service Menu..."
 echo "Project Path: $CURRENT_DIR"
 echo "Python Path:  $PYTHON_PATH"
 
 # Check if required tools are installed
-for tool in xdotool ffprobe qdbus6 rsvg-convert; do
+for tool in xdotool ffprobe qdbus6 rsvg-convert setfattr; do
     if ! command -v $tool &> /dev/null; then
         echo "Warning: $tool is not installed. Some features may fail."
     fi

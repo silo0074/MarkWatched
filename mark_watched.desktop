@@ -3,21 +3,26 @@ Type=Service
 ServiceTypes=KonqPopupMenu/Plugin
 MimeType=video/*;inode/directory;
 # These will now appear in the main right-click menu
-Actions=markWatched;markUnwatched;syncProgress
+Actions=markWatched;markUnwatched;syncProgress;backupProgress
 X-KDE-Submenu=MarkWatched
 
 [Desktop Action markWatched]
 Name=Mark as Watched
 Icon=task-complete
 # Replace /path/to/venv/ with the actual path to your virtual environment
-Exec=/mnt/D_TOSHIBA_S300/python/bin/python3 /mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --mark-watched %F
+Exec=/mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --mark-watched %F
 
 [Desktop Action markUnwatched]
 Name=Mark as Unwatched
 Icon=edit-clear
-Exec=/mnt/D_TOSHIBA_S300/python/bin/python3 /mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --mark-unwatched %F
+Exec=/mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --mark-unwatched %F
 
 [Desktop Action syncProgress]
 Name=Sync Progress from INI
 Icon=view-refresh
-Exec=/mnt/D_TOSHIBA_S300/python/bin/python3 /mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --sync %F
+Exec=/mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --sync %F
+
+[Desktop Action backupProgress]
+Name=Backup INI files
+Icon=document-save
+Exec=/mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --backup-ini %F
