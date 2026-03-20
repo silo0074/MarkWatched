@@ -13,7 +13,7 @@
 *   [Backup & Data Management](#backup)
 *   [Dolphin Tagging & Sorting](#tagging)
 *   [Troubleshooting](#troubleshooting)
-*   [Donations](#️donations)
+*   [Donations](#donations)
 *   [License](#license)
 
 ## <a id="features"></a>✨ Features
@@ -172,7 +172,7 @@ You can find a **Watched** entry in the left sidebar under the **Tags** section.
 *   **Sync not working?**
     *   Ensure SMPlayer is configured to remember file settings.
 
-## <a id="donations"></a>❤️ Donations
+## <a id="donations"></a>☕️ Donations
 
 <a href="https://www.buymeacoffee.com/liviuistrate" target="_blank">
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60px" width="217px">
