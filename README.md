@@ -27,6 +27,12 @@
 *   **Multithreaded:** Processes multiple files in parallel for fast performance.
 *   **Visual Feedback:** Uses a native KDE progress bar (`kdialog`) during processing.
 
+| Example of watch progress using MarkWatched |
+| :---: |
+| ![Example of watch progress](images/watch_progress_example.png) |
+| *Videos can be found on my [Youtube channel](https://www.youtube.com/@alientransducer5088)* |
+
+
 ## Requirements
 
 *   **OS:** Linux with KDE Plasma (Dolphin File Manager)

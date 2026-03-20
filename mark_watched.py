@@ -107,6 +107,10 @@ def get_current_tags(file_path):
 
 def add_dolphin_tag(file_path, tag_name=AppMode.WATCHED):
     """Adds a tag without duplicating it or overwriting others."""
+    # Ensure we are using the string value if an Enum was passed
+    if isinstance(tag_name, AppMode):
+        tag_name = tag_name.value
+
     thread_id = threading.get_native_id()
     current_tags = get_current_tags(file_path)
 
@@ -131,8 +135,12 @@ def add_dolphin_tag(file_path, tag_name=AppMode.WATCHED):
         print(f"[Thread-{thread_id}] Tagging: Error adding tag: {e.stderr.decode().strip()}")
 
 
-def remove_dolphin_tag(file_path, tag_name="watched"):
+def remove_dolphin_tag(file_path, tag_name=AppMode.WATCHED):
     """Removes ONLY the specified tag, preserving all others."""
+    # Ensure we are using the string value if an Enum was passed
+    if isinstance(tag_name, AppMode):
+        tag_name = tag_name.value
+
     thread_id = threading.get_native_id()
     current_tags = get_current_tags(file_path)
 
