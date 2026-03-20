@@ -13,7 +13,7 @@
 *   [Backup & Data Management](#backup--data-management)
 *   [Dolphin Tagging & Sorting](#dolphin-tagging--sorting)
 *   [Troubleshooting](#troubleshooting)
-*   [Donations](#donations)
+*   [Donations](#-donations)
 *   [License](#license)
 
 ## Features
