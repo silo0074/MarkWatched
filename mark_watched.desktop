@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Service
-ServiceTypes=KonqPopupMenu/Plugin
+ServiceTypes=KonqPopupMenu/Plugin,all/allfiles
 MimeType=video/*;inode/directory;
 # These will now appear in the main right-click menu
 Actions=markWatched;markUnwatched;syncProgress;backupProgress
@@ -23,6 +23,6 @@ Icon=view-refresh
 Exec=/mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --sync %F
 
 [Desktop Action backupProgress]
-Name=Backup INI files
+Name=Export INI files
 Icon=document-save
 Exec=/mnt/D_TOSHIBA_S300/Projects/MarkWatched/mark_watched.py --backup-ini %F

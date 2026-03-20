@@ -83,7 +83,7 @@ def force_baloo_update(file_path):
         # 3. Force a fresh index
         subprocess.run(["balooctl6", "index", file_path], capture_output=True, text=True)
         
-        print(f"[Thread-{thread_id}] Baloo index cycled for {os.path.basename(file_path)}")
+        print(f"[Thread-{thread_id}] Tagging: Baloo index cycled for {os.path.basename(file_path)}")
     except Exception:
         traceback.print_exc()
 
@@ -105,13 +105,13 @@ def get_current_tags(file_path):
     return []
 
 
-def add_dolphin_tag(file_path, tag_name="watched"):
+def add_dolphin_tag(file_path, tag_name=AppMode.WATCHED):
     """Adds a tag without duplicating it or overwriting others."""
     thread_id = threading.get_native_id()
     current_tags = get_current_tags(file_path)
 
     if tag_name in current_tags:
-        print(f"[Thread-{thread_id}] Tag '{tag_name}' already exists.")
+        print(f"[Thread-{thread_id}] Tagging: Tag '{tag_name}' already exists.")
         return
 
     current_tags.append(tag_name)
@@ -126,9 +126,9 @@ def add_dolphin_tag(file_path, tag_name="watched"):
         # Force Baloo to update its database for this file
         force_baloo_update(file_path)
 
-        print(f"[Thread-{thread_id}] Added tag '{tag_name}' to {os.path.basename(file_path)}")
+        print(f"[Thread-{thread_id}] Tagging: Added tag '{tag_name}' to {os.path.basename(file_path)}")
     except subprocess.CalledProcessError as e:
-        print(f"[Thread-{thread_id}] Error adding tag: {e.stderr.decode().strip()}")
+        print(f"[Thread-{thread_id}] Tagging: Error adding tag: {e.stderr.decode().strip()}")
 
 
 def remove_dolphin_tag(file_path, tag_name="watched"):
@@ -157,7 +157,7 @@ def remove_dolphin_tag(file_path, tag_name="watched"):
         # Force Baloo to update its database for this file
         force_baloo_update(file_path)
 
-        print(f"[Thread-{thread_id}] Removed tag '{tag_name}' from {os.path.basename(file_path)}")
+        print(f"[Thread-{thread_id}] Tagging: Removed tag '{tag_name}' from {os.path.basename(file_path)}")
     except subprocess.CalledProcessError as e:
         # Note: -x might fail if the attribute was already gone, which is fine
         pass
@@ -621,9 +621,9 @@ def process_item(item_path, mode):
 
     # Add/remove KDE tags
     if mode == AppMode.WATCHED:
-        add_dolphin_tag(item_path, "watched")
+        add_dolphin_tag(item_path, AppMode.WATCHED)
     elif mode == AppMode.UNWATCHED:
-        remove_dolphin_tag(item_path, "watched")
+        remove_dolphin_tag(item_path, AppMode.WATCHED)
 
     # Write INI file
     if ini_data_to_write:

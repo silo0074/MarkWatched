@@ -10,6 +10,8 @@
 *   [Installation](#installation)
 *   [Usage](#usage)
 *   [Configuration](#configuration)
+*   [Backup & Data Management](#-Backup-&-Data-Management)
+*   [Dolphin Tagging & Sorting](#-Dolphin-Tagging-&-Sorting)
 *   [Troubleshooting](#troubleshooting)
 *   [Donations](#-donations)
 *   [License](#-license)
@@ -30,13 +32,14 @@
 *   **OS:** Linux with KDE Plasma (Dolphin File Manager)
 *   **Python:** Python 3
 *   **Python Libraries:**
-    *   `Pillow` (PIL)
+    *   `Pillow` (PIL for image processing)
 *   **System Tools:**
     *   `ffmpeg` (specifically `ffprobe`)
     *   `xdotool` (to refresh Dolphin)
     *   `rsvg-convert` (to generate folder icons)
     *   `kdialog` (for dialogs and progress bars)
     *   `qdbus6` (or `qdbus`)
+    *   `setfattr` (for tagging)
 
 ### Installing Dependencies
 
@@ -94,11 +97,14 @@ killall dolphin && dolphin &
 1.  Open Dolphin.
 2.  Select one or more video files (or a folder).
 3.  Right-click to open the context menu.
-4.  Navigate to **MarkWatched**.
+4.  Navigate to **MarkWatched** that can also be under **Actions**.
 5.  Select an action:
     *   **Mark as Watched**
     *   **Mark as Unwatched**
     *   **Sync Progress from INI**
+    *   **Export INI files**
+
+**Note**: the script uses existing thumbnails. To make the system generate them, press F12 and cycle through the 3 views: **Icons** (CTRL+1), **Compact** (CTRL+2), **Details** (CTRL+3).
 
 ## Configuration
 
@@ -110,7 +116,47 @@ Look for the `--- CONFIGURATION ---` section in `mark_watched.py`:
 INI_BASE_PATH = os.path.expanduser("~/.config/smplayer/file_settings/")
 MIN_THRESHOLD = 5.0   # % below which is "unwatched"
 MAX_THRESHOLD = 90.0  # % above which is "watched"
+VIDEO_EXTS = ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv', '.mpeg', '.mpg')
 ```
+
+
+## 💾 Backup & Data Management
+
+MarkWatched includes a feature to backup your SMPlayer watch history (`.ini` files). This is useful for migrating to a new system or protecting your progress before a "BleachBit" or cache cleanup.
+
+### Exporting Watch Progress
+1. Select your videos/folders and choose **Backup Progress** from the menu.
+2. **First Run:** You will be prompted by a folder picker to select your destination backup directory.
+3. **Configuration:** Your choice is saved in `~/.config/markwatched/config.ini`.
+4. **Changing the Backup Path:** If you wish to select a different backup folder later, simply delete the configuration file:
+```bash
+rm ~/.config/markwatched/config.ini
+```
+The next time you run a backup, the script will prompt you for a new location.
+
+### Restoring Progress
+If you reinstall your OS or lose your SMPlayer settings, you can restore your progress by copying the backed-up .ini files (and their subfolders) back to the SMPlayer config directory:
+```bash
+cp -r /path/to/your/backup/* ~/.config/smplayer/file_settings/
+```
+
+## 🏷️ Dolphin Tagging & Sorting
+In addition to visual checkmarks on thumbnails, MarkWatched applies native KDE Tags to your files. This allows for powerful sorting and filtering within Dolphin.
+
+### Displaying the Tag Column
+To see which files are marked as "watched" in a list view:
+
+* Open Dolphin and switch to Details View (Ctrl + 1).
+* Right-click any column header (e.g., "Name" or "Size").
+* Check the box for Tags.
+* Click the Tags header to sort all watched files together.
+
+### Using the Sidebar
+Your watched files are also indexed by Baloo (KDE's file indexer).
+You can find a **Watched** entry in the left sidebar under the **Tags** section.
+
+**Note on Refreshing**: While the script forces a Baloo re-index, the Dolphin sidebar UI can sometimes be slow to update. If a recently tagged file doesn't appear on the left immediately, press **F5** or navigate away and back to the folder to refresh the view.
+
 
 ## Troubleshooting
 
@@ -126,7 +172,6 @@ MAX_THRESHOLD = 90.0  # % above which is "watched"
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60px" width="217px">
 </a>
 
-<br>
 <br>
 
 
