@@ -14,7 +14,7 @@
 *   [Dolphin Tagging & Sorting](#dolphin-tagging--sorting)
 *   [Troubleshooting](#troubleshooting)
 *   [Donations](#-donations)
-*   [License](#license)
+*   [License](#--license)
 
 ## Features
 
