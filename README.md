@@ -10,13 +10,13 @@
 *   [Installation](#installation)
 *   [Usage](#usage)
 *   [Configuration](#configuration)
-*   [Backup & Data Management](#backup--data-management)
-*   [Dolphin Tagging & Sorting](#dolphin-tagging--sorting)
+*   [Backup & Data Management](#backup)
+*   [Dolphin Tagging & Sorting](#tagging)
 *   [Troubleshooting](#troubleshooting)
-*   [Donations](#-donations)
-*   [License](#--license)
+*   [Donations](#️donations)
+*   [License](#license)
 
-## Features
+## <a id="features"></a>✨ Features
 
 *   **Mark as Watched:** Adds a green checkmark to the video thumbnail.
 *   **Mark as Unwatched:** Restores the original thumbnail.
@@ -126,7 +126,7 @@ VIDEO_EXTS = ('.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv', '.mpeg', 
 ```
 
 
-## 💾 Backup & Data Management
+## <a id="backup"></a>💾 Backup & Data Management
 
 MarkWatched includes a feature to backup your SMPlayer watch history (`.ini` files). This is useful for migrating to a new system or protecting your progress before a "BleachBit" or cache cleanup.
 
@@ -146,7 +146,7 @@ If you reinstall your OS or lose your SMPlayer settings, you can restore your pr
 cp -r /path/to/your/backup/* ~/.config/smplayer/file_settings/
 ```
 
-## 🏷️ Dolphin Tagging & Sorting
+## <a id="tagging"></a>🏷️ Dolphin Tagging & Sorting
 In addition to visual checkmarks on thumbnails, MarkWatched applies native KDE Tags to your files. This allows for powerful sorting and filtering within Dolphin.
 
 ### Displaying the Tag Column
@@ -172,7 +172,7 @@ You can find a **Watched** entry in the left sidebar under the **Tags** section.
 *   **Sync not working?**
     *   Ensure SMPlayer is configured to remember file settings.
 
-## ❤️ Donations
+## <a id="donations"></a>❤️ Donations
 
 <a href="https://www.buymeacoffee.com/liviuistrate" target="_blank">
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="60px" width="217px">
@@ -181,5 +181,5 @@ You can find a **Watched** entry in the left sidebar under the **Tags** section.
 <br>
 
 
-## 📄 License
+## <a id="license"></a>📄 License
 This project is licensed under the [GPLv3](https://github.com/silo0074/MarkWatched/blob/main/LICENSE) License.
