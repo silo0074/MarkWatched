@@ -10,11 +10,11 @@
 *   [Installation](#installation)
 *   [Usage](#usage)
 *   [Configuration](#configuration)
-*   [Backup & Data Management](#-Backup-&-Data-Management)
-*   [Dolphin Tagging & Sorting](#-Dolphin-Tagging-&-Sorting)
+*   [Backup & Data Management](#backup--data-management)
+*   [Dolphin Tagging & Sorting](#dolphin-tagging--sorting)
 *   [Troubleshooting](#troubleshooting)
-*   [Donations](#-donations)
-*   [License](#-license)
+*   [Donations](#donations)
+*   [License](#license)
 
 ## Features
 
